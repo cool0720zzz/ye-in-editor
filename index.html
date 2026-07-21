@@ -240,12 +240,19 @@ async function openSong(f){
 
 function markDirty(){ $('#dirty').classList.remove('hide'); }
 function markClean(){ $('#dirty').classList.add('hide'); }
-$('#taStyle').addEventListener('input',()=>{markDirty();autoGrow()});
-$('#taLyrics').addEventListener('input',()=>{markDirty();autoGrow()});
-function autoGrow(){
-  [$('#taStyle'),$('#taLyrics')].forEach(t=>{
-    t.style.height='auto'; t.style.height=Math.min(t.scrollHeight+4,2000)+'px';
+$('#taStyle').addEventListener('input',e=>{markDirty();autoGrow(e.target)});
+$('#taLyrics').addEventListener('input',e=>{markDirty();autoGrow(e.target)});
+/* 높이 자동 조절.
+   ⚠️ height:auto 로 접는 순간 문서 높이가 줄어 브라우저가 스크롤을 맨 위로 당긴다.
+   → (1) 타이핑 중인 창만 건드리고 (2) 스크롤 위치를 저장·복구해서 점프를 막는다. */
+function autoGrow(target){
+  const els = target ? [target] : [$('#taStyle'),$('#taLyrics')];
+  const y = window.scrollY, docEl = document.documentElement;
+  els.forEach(t=>{
+    t.style.height='auto';
+    t.style.height=Math.min(t.scrollHeight+4,6000)+'px';
   });
+  if(window.scrollY !== y){ docEl.style.scrollBehavior='auto'; window.scrollTo(0,y); docEl.style.scrollBehavior=''; }
 }
 
 /* 원문에서 두 블록만 교체 — 설계 노트는 그대로 보존 */
