@@ -103,12 +103,16 @@
 </main>
 
 
+<div id="commitbar" class="savebar hide">
+  <button id="btnCommit" class="btn-primary">✅ 커밋 — 이 기준으로 작업 시작 (<span id="ncommit">0</span>)</button>
+</div>
+
 <script>
 const OWNER='cool0720zzz', REPO='ye-in-project', API='https://api.github.com';
 const MANIFEST='gallery/manifest.json', DECISIONS='gallery/decisions.json';
 const $=s=>document.querySelector(s);
 let token=localStorage.getItem('yein_tok')||'';
-let items=[], choices={}, decSha=null;
+let items=[], choices={}, decSha=null, committedAt=null, baselineJson='';
 
 const b64d=b=>new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g,'')),c=>c.charCodeAt(0)));
 function b64e(str){
@@ -153,7 +157,8 @@ async function load(){
     try{
       const dd=await gh(`/repos/${OWNER}/${REPO}/contents/${DECISIONS}?ref=main&t=${Date.now()}`);
       decSha=dd.sha; const dj=JSON.parse(b64d(dd.content));
-      choices=dj.decisions||{};
+      choices=dj.decisions||{}; committedAt=dj.committedAt||null;
+      baselineJson=JSON.stringify(choices);
     }catch(e){/* 없을 수 있음 */}
     hideMsg($('#msg')); render();
   }catch(e){
@@ -215,15 +220,22 @@ function render(){
   });
 }
 
-/* ── 자동 저장: 버튼 없음. 선택·메모가 알아서 커밋된다 ── */
-let saveTimer=null, saving=false, dirtyAgain=false;
+/* ── 2단계 저장: 선택·메모는 자동 '임시저장'(초안), [커밋]을 눌러야 작업 지시가 된다 ── */
+let saveTimer=null, saving=false, dirtyAgain=false, pendingCommit=false;
 function setStat(t){ $('#saveStat').textContent=t; }
-function scheduleSave(delay){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, delay); setStat('…'); }
-async function saveNow(){
-  if(saving){ dirtyAgain=true; return; }
-  saving=true; setStat('저장 중…');
-  const payload={submitted:new Date().toISOString(), decisions:choices};
-  const mk=()=>{ const b={message:`갤러리 결정 ${new Date().toISOString().slice(0,16)}`,
+function updateCommitBar(){
+  const dirty = JSON.stringify(choices) !== baselineJson;
+  const n = Object.values(choices).filter(c=>c.choice).length;
+  $('#ncommit').textContent = n;
+  $('#commitbar').classList.toggle('hide', !dirty || n===0);
+}
+function scheduleSave(delay){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>saveNow(false), delay); setStat('…'); updateCommitBar(); }
+async function saveNow(commit){
+  if(saving){ dirtyAgain=true; pendingCommit=pendingCommit||commit; return; }
+  saving=true; setStat(commit?'커밋 중…':'임시저장 중…');
+  if(commit) committedAt=new Date().toISOString();
+  const payload={draft:!commit, committedAt, savedAt:new Date().toISOString(), decisions:choices};
+  const mk=()=>{ const b={message:(commit?`갤러리 커밋 `:`갤러리 임시저장 `)+new Date().toISOString().slice(0,16),
     content:b64e(JSON.stringify(payload,null,2))}; if(decSha) b.sha=decSha; return b; };
   try{
     let r;
@@ -236,10 +248,16 @@ async function saveNow(){
       } else throw e;
     }
     decSha=r.content.sha;
-    const t=new Date(); setStat('✓ 저장됨 '+String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0'));
-  }catch(e){ setStat('⚠️ 저장 실패'); msg($('#msg'),'저장 실패: '+e.message+' — 잠시 후 다시 선택하면 재시도돼요.','err'); }
-  finally{ saving=false; if(dirtyAgain){ dirtyAgain=false; scheduleSave(400); } }
+    const t=new Date(), hm=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+    if(commit){
+      baselineJson=JSON.stringify(choices);
+      setStat('✅ 커밋됨 '+hm); updateCommitBar();
+      msg($('#msg'),'✅ 커밋 완료 — 클로드가 이 기준으로 작업을 시작합니다.','ok');
+    } else setStat('임시저장 ✓ '+hm);
+  }catch(e){ setStat('⚠️ 저장 실패'); msg($('#msg'),'저장 실패: '+e.message+' — 잠시 후 다시 시도해 주세요.','err'); }
+  finally{ saving=false; if(dirtyAgain){ dirtyAgain=false; const c=pendingCommit; pendingCommit=false; setTimeout(()=>saveNow(c),400); } }
 }
+$('#btnCommit').onclick=()=>{ clearTimeout(saveTimer); saveNow(true); };
 
 $('#btnReload').onclick=load;
 load();
