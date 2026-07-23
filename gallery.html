@@ -75,6 +75,7 @@
 <body>
 <header>
   <h1>🎬 예인 결과 갤러리</h1>
+  <span id="saveStat" class="pill"></span>
   <span id="count" class="pill"></span>
   <button id="btnReload" class="btn-sm">새로고침</button>
   <button id="btnTok" class="btn-sm">토큰</button>
@@ -101,9 +102,6 @@
   <div id="list"></div>
 </main>
 
-<div id="savebar" class="savebar hide">
-  <button id="btnSave" class="btn-primary">선택 저장 (<span id="pending">0</span>)</button>
-</div>
 
 <script>
 const OWNER='cool0720zzz', REPO='ye-in-project', API='https://api.github.com';
@@ -168,7 +166,7 @@ async function load(){
 function render(){
   const list=$('#list');
   $('#count').textContent = items.length ? items.length+'개' : '';
-  if(!items.length){ list.innerHTML='<div class="empty">아직 올라온 결과가 없어요.</div>'; updatePending(); return; }
+  if(!items.length){ list.innerHTML='<div class="empty">아직 올라온 결과가 없어요.</div>'; return; }
   list.innerHTML='';
   const badge={image:['b-img','이미지'],loop:['b-loop','루프'],video:['b-video','리릭비디오'],lyricvideo:['b-video','리릭비디오']};
   items.forEach(it=>{
@@ -207,33 +205,41 @@ function render(){
       card.querySelectorAll('.choices button').forEach(x=>x.className='');
       b.className = ch==='rework'?'sel-rework':ch==='hold'?'sel-hold':'sel-go';
       card.querySelector('.notes').classList.toggle('show', ch==='rework');
-      updatePending();
+      scheduleSave(600);                       // 선택 즉시(짧은 디바운스) 자동 저장
     });
     const ta=card.querySelector('textarea');
-    if(ta) ta.addEventListener('input',e=>{ choices[it.id]={...(choices[it.id]||{}), notes:e.target.value}; });
+    if(ta) ta.addEventListener('input',e=>{
+      choices[it.id]={...(choices[it.id]||{}), notes:e.target.value};
+      scheduleSave(1800);                      // 타이핑 멈추고 1.8초 뒤 저장
+    });
   });
-  updatePending();
 }
 
-function updatePending(){
-  const n=Object.values(choices).filter(c=>c.choice).length;
-  $('#pending').textContent=n;
-  $('#savebar').classList.toggle('hide', n===0);
-}
-
-$('#btnSave').onclick=async()=>{
+/* ── 자동 저장: 버튼 없음. 선택·메모가 알아서 커밋된다 ── */
+let saveTimer=null, saving=false, dirtyAgain=false;
+function setStat(t){ $('#saveStat').textContent=t; }
+function scheduleSave(delay){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, delay); setStat('…'); }
+async function saveNow(){
+  if(saving){ dirtyAgain=true; return; }
+  saving=true; setStat('저장 중…');
   const payload={submitted:new Date().toISOString(), decisions:choices};
-  const body={message:`갤러리 결정 ${new Date().toISOString().slice(0,16)}`,
-    content:b64e(JSON.stringify(payload,null,2))};
-  if(decSha) body.sha=decSha;
+  const mk=()=>{ const b={message:`갤러리 결정 ${new Date().toISOString().slice(0,16)}`,
+    content:b64e(JSON.stringify(payload,null,2))}; if(decSha) b.sha=decSha; return b; };
   try{
-    msg($('#msg'),'저장 중…','info');
-    const r=await gh(`/repos/${OWNER}/${REPO}/contents/${DECISIONS}`,{method:'PUT',body:JSON.stringify(body)});
+    let r;
+    try{ r=await gh(`/repos/${OWNER}/${REPO}/contents/${DECISIONS}`,{method:'PUT',body:JSON.stringify(mk())}); }
+    catch(e){
+      // sha 충돌(다른 기기/이전 커밋) → 최신 sha 다시 받아 1회 재시도
+      if(String(e).includes('409')||String(e).includes('422')){
+        try{ const d=await gh(`/repos/${OWNER}/${REPO}/contents/${DECISIONS}?ref=main&t=${Date.now()}`); decSha=d.sha; }catch(_){ decSha=null; }
+        r=await gh(`/repos/${OWNER}/${REPO}/contents/${DECISIONS}`,{method:'PUT',body:JSON.stringify(mk())});
+      } else throw e;
+    }
     decSha=r.content.sha;
-    msg($('#msg'),'✅ 저장했어요. 클로드가 이 선택대로 이어서 작업합니다.','ok');
-    window.scrollTo({top:0,behavior:'smooth'});
-  }catch(e){ msg($('#msg'),'저장 실패: '+e.message,'err'); }
-};
+    const t=new Date(); setStat('✓ 저장됨 '+String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0'));
+  }catch(e){ setStat('⚠️ 저장 실패'); msg($('#msg'),'저장 실패: '+e.message+' — 잠시 후 다시 선택하면 재시도돼요.','err'); }
+  finally{ saving=false; if(dirtyAgain){ dirtyAgain=false; scheduleSave(400); } }
+}
 
 $('#btnReload').onclick=load;
 load();
