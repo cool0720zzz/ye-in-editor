@@ -58,7 +58,10 @@ with sync_playwright() as p:
     check(pg.locator("#btnSaveAll").is_visible() and pg.locator("#btnCommit").is_visible(),
           "[전체 저장] + [작업 시작] 두 버튼 노출")
     check(pg.locator(".hist").count() > 0, "지난 피드백 기록 블록 노출")
-    check("작업 지시됨" in pg.locator(".mystate").first.inner_text(), "기존 커밋 항목은 '작업 지시됨'")
+    # 커밋된 데이터면 '작업 지시됨', 폰에서 저장만 한 초안이면 '확정 저장됨'
+    want = "확정 저장됨" if json.loads(decisions).get("draft") else "작업 지시됨"
+    got = pg.locator(".mystate").first.inner_text()
+    check(want in got, f"기존 항목 배지: '{want}' 기대 → '{got}'")
     pg.screenshot(path=str(outdir / "1_첫화면.png"), full_page=False)
 
     card = pg.locator(".card").filter(has_text="A04").first
