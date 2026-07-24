@@ -17,19 +17,25 @@
     backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
     padding:12px 16px calc(12px + env(safe-area-inset-top,0)/3);
     display:flex;align-items:center;gap:10px}
-  header h1{font-size:16px;margin:0;flex:1;font-weight:700}
+  header h1{font-size:16px;margin:0;flex:1;font-weight:700;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .wrap{padding:16px;max-width:860px;margin:0 auto;
-    padding-bottom:calc(90px + env(safe-area-inset-bottom,0))}
+    padding-bottom:calc(150px + env(safe-area-inset-bottom,0))}
   button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid var(--line);
     background:var(--panel2);color:var(--tx);padding:10px 14px;transition:.12s}
   button:active{transform:scale(.98)}
+  button:disabled{opacity:.4;pointer-events:none}
   .btn-primary{background:var(--accent);border-color:var(--accent);color:#0b1020;font-weight:700}
   .btn-sm{padding:7px 11px;font-size:13px;border-radius:8px}
   input,textarea{font:inherit;width:100%;background:var(--panel);color:var(--tx);
     border:1px solid var(--line);border-radius:10px;padding:12px}
   textarea{resize:vertical;line-height:1.6;min-height:76px;font-size:14px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
-    overflow:hidden;margin-bottom:16px}
+    overflow:hidden;margin-bottom:16px;transition:border-color .15s,box-shadow .15s}
+  /* 카드 테두리로 상태를 한눈에 — 주황=아직 확정 안 함, 파랑=확정 저장됨, 초록=작업 지시됨 */
+  .card.c-pending{border-color:rgba(251,191,36,.6);box-shadow:0 0 0 1px rgba(251,191,36,.22)}
+  .card.c-confirmed{border-color:rgba(122,162,255,.55)}
+  .card.c-committed{border-color:rgba(74,222,128,.5)}
   .thumb{width:100%;display:block;background:#000;max-height:52vh;object-fit:contain}
   .body{padding:14px 16px}
   .row1{display:flex;align-items:center;gap:8px;margin-bottom:4px}
@@ -53,6 +59,35 @@
   .st-held{background:rgba(251,191,36,.14);color:var(--warn)}
   .st-continued{background:rgba(74,222,128,.14);color:var(--ok)}
   .st-done{background:rgba(74,222,128,.14);color:var(--ok)}
+  /* 내 입력이 어디까지 갔는지 알려주는 배지 */
+  .mystate{font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:6px;white-space:nowrap}
+  .ms-pending{background:rgba(251,191,36,.18);color:var(--warn)}
+  .ms-confirmed{background:rgba(122,162,255,.18);color:var(--accent)}
+  .ms-committed{background:rgba(74,222,128,.16);color:var(--ok)}
+  /* 지난 피드백 누적 기록 — 다음 이미지 만들 때 이 로그를 근거로 삼는다 */
+  .hist{margin-top:12px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:0 12px}
+  .hist summary{cursor:pointer;padding:10px 0;font-size:13px;font-weight:700;
+    color:var(--dim);list-style:none}
+  .hist summary::-webkit-details-marker{display:none}
+  .hist summary::before{content:'▸ ';color:var(--accent)}
+  .hist[open] summary::before{content:'▾ '}
+  .histrow{display:flex;gap:10px;padding:9px 0;border-top:1px solid var(--line)}
+  .histno{flex:none;width:20px;height:20px;border-radius:50%;background:var(--panel);
+    color:var(--dim);font-size:11px;font-weight:800;
+    display:flex;align-items:center;justify-content:center}
+  .histmeta{font-size:11.5px;color:#6b7280}
+  .histnote{font-size:13.5px;color:var(--tx);white-space:pre-wrap;margin-top:2px}
+  .newver{margin-top:10px;font-size:12.5px;color:var(--accent);
+    background:rgba(122,162,255,.1);border:1px solid rgba(122,162,255,.3);
+    border-radius:8px;padding:8px 11px}
+  .cardsave{display:flex;align-items:center;gap:10px;margin-top:12px;
+    padding-top:12px;border-top:1px dashed var(--line)}
+  .cardhint{flex:1;font-size:12.5px;color:var(--dim)}
+  .btn-confirm{background:var(--accent);border-color:var(--accent);color:#0b1020;font-weight:700}
+  .btn-confirm[disabled]{background:var(--panel2);border-color:var(--line);color:var(--dim);
+    opacity:.55;pointer-events:none}
+  .btn-confirm.done{background:rgba(74,222,128,.16);border-color:var(--ok);color:var(--ok)}
   .msg{padding:11px 14px;border-radius:10px;margin:12px 0;font-size:14px;display:none}
   .msg.show{display:block}
   .msg.ok{background:rgba(74,222,128,.12);border:1px solid rgba(74,222,128,.35);color:var(--ok)}
@@ -61,9 +96,22 @@
   .empty{color:var(--dim);text-align:center;padding:60px 20px}
   .savebar{position:fixed;bottom:0;left:0;right:0;background:rgba(15,17,21,.97);
     backdrop-filter:blur(8px);border-top:1px solid var(--line);
-    padding:12px 16px calc(12px + env(safe-area-inset-bottom,0));display:flex;gap:10px;
-    max-width:860px;margin:0 auto}
-  .savebar button{flex:1}
+    padding:10px 16px calc(10px + env(safe-area-inset-bottom,0));
+    display:flex;flex-direction:column;gap:8px;max-width:860px;margin:0 auto;z-index:20}
+  .barinfo{font-size:12.5px;color:var(--dim);min-height:18px}
+  .barinfo b{color:var(--warn)}
+  .barbtns{display:flex;gap:10px}
+  .barbtns button{flex:1}
+  /* 무엇을 눌러도 화면 가운데 큰 알림이 뜨게 — 폰에서 헤더 작은 글씨는 안 보임 */
+  .toast{position:fixed;left:50%;transform:translateX(-50%) translateY(18px);
+    bottom:calc(118px + env(safe-area-inset-bottom,0));z-index:40;
+    background:#1f2530;border:1px solid var(--line);color:var(--tx);
+    padding:13px 20px;border-radius:12px;font-size:14.5px;font-weight:700;
+    box-shadow:0 12px 34px rgba(0,0,0,.55);opacity:0;pointer-events:none;
+    transition:.2s;max-width:88vw;text-align:center}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast.ok{border-color:rgba(74,222,128,.55);color:var(--ok)}
+  .toast.err{border-color:rgba(248,113,113,.55);color:var(--err)}
   .tokwrap{padding:16px;max-width:520px;margin:0 auto}
   .tokwrap li{margin:7px 0;color:var(--dim);font-size:14px}
   code{background:var(--panel2);padding:2px 6px;border-radius:5px;font-size:13px;word-break:break-all}
@@ -75,7 +123,6 @@
 <body>
 <header>
   <h1>🎬 예인 결과 갤러리</h1>
-  <span id="saveStat" class="pill"></span>
   <span id="count" class="pill"></span>
   <button id="btnReload" class="btn-sm">새로고침</button>
   <button id="btnTok" class="btn-sm">토큰</button>
@@ -103,8 +150,14 @@
 </main>
 
 
+<div id="toast" class="toast"></div>
+
 <div id="commitbar" class="savebar hide">
-  <button id="btnCommit" class="btn-primary">✅ 커밋 — 이 기준으로 작업 시작 (<span id="ncommit">0</span>)</button>
+  <div id="barinfo" class="barinfo"></div>
+  <div class="barbtns">
+    <button id="btnSaveAll">💾 전체 저장</button>
+    <button id="btnCommit" class="btn-primary">✅ 작업 시작 (<span id="ncommit">0</span>)</button>
+  </div>
 </div>
 
 <script>
@@ -112,7 +165,7 @@ const OWNER='cool0720zzz', REPO='ye-in-project', API='https://api.github.com';
 const MANIFEST='gallery/manifest.json', DECISIONS='gallery/decisions.json';
 const $=s=>document.querySelector(s);
 let token=localStorage.getItem('yein_tok')||'';
-let items=[], choices={}, decSha=null, committedAt=null, baselineJson='';
+let items=[], choices={}, decSha=null, committedAt=null, baselineJson='', savedJson='';
 
 const b64d=b=>new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g,'')),c=>c.charCodeAt(0)));
 function b64e(str){
@@ -123,6 +176,20 @@ function b64e(str){
 function msg(el,text,kind){ el.className='msg show '+(kind||'info'); el.innerHTML=text; }
 function hideMsg(el){ el.className='msg'; }
 function show(v){ ['viewToken','view'].forEach(x=>$('#'+x).classList.add('hide')); $('#'+v).classList.remove('hide'); }
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const CH_LABEL={rework:'🔄 다시 작업',hold:'⏸ 보류',continue:'▶ 이어가기',done:'✓ 완료'};
+function hm(d){ d=d||new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function fmtTs(iso){
+  if(!iso) return '';
+  const d=new Date(iso); if(isNaN(d)) return '';
+  return `${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${hm(d)}`;
+}
+/* 폰에서 헤더 구석 글씨는 안 보인다 — 뭘 눌렀든 큰 알림으로 알려준다 */
+let toastTimer=null;
+function toast(text,kind){
+  const t=$('#toast'); t.textContent=text; t.className='toast show '+(kind||'');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>{ t.className='toast '+(kind||''); },2800);
+}
 
 async function gh(path,opts){
   const r=await fetch(API+path,{...opts,headers:{
@@ -154,18 +221,82 @@ async function load(){
     items=data.items||[];
     // 기존 결정 로드 (있으면 미제출 선택 복원)
     choices={}; decSha=null;
+    let wasCommitted=false;
     try{
       const dd=await gh(`/repos/${OWNER}/${REPO}/contents/${DECISIONS}?ref=main&t=${Date.now()}`);
       decSha=dd.sha; const dj=JSON.parse(b64d(dd.content));
       choices=dj.decisions||{}; committedAt=dj.committedAt||null;
-      baselineJson=JSON.stringify(choices);
+      wasCommitted = dj.draft===false;
     }catch(e){/* 없을 수 있음 */}
-    hideMsg($('#msg')); render();
+    normalize(wasCommitted);
+    // 정리 결과는 그대로가 기준 — 아무것도 안 했는데 '저장 안 됨'으로 보이지 않게
+    baselineJson=savedJson=JSON.stringify(choices);
+    hideMsg($('#msg')); render(); updateBar();
   }catch(e){
     if(String(e).includes('404')) msg($('#msg'),'아직 결과가 없어요. 클로드가 첫 작업을 올리면 여기 떠요.','info');
     else if(String(e).includes('401')||String(e).includes('403')) { msg($('#msg'),'토큰이 필요하거나 만료됐어요.','err'); show('viewToken'); }
     else msg($('#msg'),'오류: '+e.message,'err');
   }
+}
+
+/* ── 피드백 누적 기록 ───────────────────────────────────────────────
+   메모를 덮어쓰지 않고 history[] 에 버전별로 쌓는다.
+   against = 그때 화면에 떠 있던 결과물의 발행 시각 — 어느 버전을 보고 한 말인지. */
+function pushHistory(c, e){
+  if(!Array.isArray(c.history)) c.history=[];
+  const notes=(e.notes||'').trim();
+  if(!e.choice && !notes) return false;
+  const last=c.history[c.history.length-1];
+  if(last && last.choice===(e.choice||'') && (last.notes||'')===notes) return false;  // 중복 방지
+  c.history.push({ts:e.ts||new Date().toISOString(), choice:e.choice||'', notes, against:e.against||null});
+  return true;
+}
+/* 불러온 데이터를 현재 manifest 기준으로 정리 */
+function normalize(wasCommitted){
+  const byId={}; items.forEach(it=>byId[it.id]=it);
+  Object.keys(choices).forEach(id=>{
+    const c=choices[id]||{}, it=byId[id];
+    if(!Array.isArray(c.history)) c.history=[];
+    // 예전 형식(기록 없음) → 남아있던 메모 1건을 기록으로 승격
+    if(!c.history.length && (c.choice||(c.notes||'').trim())){
+      pushHistory(c,{ts:c.ts,choice:c.choice,notes:c.notes,against:c.against||(it?it.created:null)});
+      if(c.confirmed===undefined) c.confirmed=true;
+      if(c.committed===undefined) c.committed=!!wasCommitted;
+    }
+    if(!c.against && it) c.against=it.created||null;
+    // 새 버전이 발행됨 → 이전 요청은 반영된 것이므로 기록으로 넘기고 입력칸을 비운다
+    if(it && c.against && it.created && c.against!==it.created){
+      pushHistory(c,{ts:c.ts,choice:c.choice,notes:c.notes,against:c.against});
+      c.choice=''; c.notes=''; c.against=it.created;
+      c.confirmed=false; c.committed=false; c.fresh=true;
+    }
+    choices[id]=c;
+  });
+}
+/* 카드 상태 = 내 입력이 어디까지 갔는지 */
+function stateOf(c){
+  if(!c || (!c.choice && !(c.notes||'').trim())) return null;
+  if(c.committed)  return ['committed','✅ 작업 지시됨'];
+  if(c.confirmed)  return ['confirmed','✔ 확정 저장됨'];
+  return ['pending','✏️ 확정 안 됨'];
+}
+function refreshCard(card,id){
+  const c=choices[id]||{}, st=stateOf(c);
+  card.classList.remove('c-pending','c-confirmed','c-committed');
+  if(st) card.classList.add('c-'+st[0]);
+  const badge=card.querySelector('.mystate');
+  badge.className='mystate'+(st?' ms-'+st[0]:'');
+  badge.textContent=st?st[1]:'';
+  const btn=card.querySelector('.btn-confirm'), hint=card.querySelector('.cardhint');
+  const has=!!c.choice;
+  btn.disabled=!has;
+  btn.classList.toggle('done', has && !!c.confirmed);
+  btn.textContent = (has && c.confirmed) ? '✔ 확정됨' : '✔ 이 항목 확정';
+  hint.textContent = !has ? '위에서 하나 고르면 확정할 수 있어요'
+    : c.committed ? '작업 지시가 들어갔어요'
+    : c.confirmed ? '저장됐어요 — 아래 [작업 시작]을 누르면 진행합니다'
+    : '아직 확정 전이에요 — 이 버튼을 눌러주세요';
+  updateBar();
 }
 
 function render(){
@@ -180,16 +311,31 @@ function render(){
     const card=document.createElement('div'); card.className='card';
     const statusHtml = it.status && it.status!=='new'
       ? `<span class="status st-${it.status}">${({reworking:'다시 작업 중',held:'보류',continued:'이어감',done:'완료'})[it.status]||it.status}</span>` : '';
+    const hist=(c.history||[]).filter(h=>h.choice||(h.notes||'').trim());
+    const histHtml = hist.length ? `
+        <details class="hist">
+          <summary>📝 지난 피드백 ${hist.length}건 — 다음 작업의 근거로 씁니다</summary>
+          ${hist.map((h,i)=>`<div class="histrow">
+              <span class="histno">${i+1}</span>
+              <div>
+                <div class="histmeta">${esc(fmtTs(h.ts))}${h.against?' · '+esc(h.against)+' 버전에 대해':''} · ${esc(CH_LABEL[h.choice]||h.choice||'')}</div>
+                ${h.notes?`<div class="histnote">${esc(h.notes)}</div>`:''}
+              </div>
+            </div>`).join('')}
+        </details>` : '';
     card.innerHTML=`
       ${it.thumb?`<img class="thumb" src="${it.thumb}" alt="">`:''}
       <div class="body">
         <div class="row1">
           <span class="badge ${bg[0]}">${bg[1]}</span>
-          <span class="title">${it.title||it.id}</span>
+          <span class="title">${esc(it.title||it.id)}</span>
           ${statusHtml}
+          <span class="mystate"></span>
         </div>
-        <div class="verdict">${it.verdict||''}</div>
-        <div class="meta">${it.created||''} · <code>${it.meta||''}</code></div>
+        <div class="verdict">${esc(it.verdict||'')}</div>
+        <div class="meta">${esc(it.created||'')} · <code>${esc(it.meta||'')}</code></div>
+        ${c.fresh&&hist.length?`<div class="newver">새 버전이 올라왔어요 — 지난 피드백은 아래 기록으로 넘겼고, 이번 판에 대한 의견을 새로 남겨주세요.</div>`:''}
+        ${histHtml}
         <div class="choices" data-id="${it.id}">
           <button data-ch="rework" class="${c.choice==='rework'?'sel-rework':''}">🔄 다시 작업</button>
           <button data-ch="hold" class="${c.choice==='hold'?'sel-hold':''}">⏸ 보류</button>
@@ -198,42 +344,89 @@ function render(){
             : `<button data-ch="continue" class="${c.choice==='continue'?'sel-go':''}">▶ 이어가기</button>`}
         </div>
         <div class="notes ${c.choice==='rework'?'show':''}">
-          <textarea placeholder="수정 사항을 적어주세요 (예: 배경 더 어둡게 / 가사 3번째 줄 타이밍 0.5초 늦게 / 얼굴 오른쪽 봐줘)" data-notes="${it.id}">${c.notes||''}</textarea>
+          <textarea placeholder="수정 사항을 적어주세요 (예: 배경 더 어둡게 / 가사 3번째 줄 타이밍 0.5초 늦게 / 얼굴 오른쪽 봐줘)" data-notes="${esc(it.id)}">${esc(c.notes||'')}</textarea>
+        </div>
+        <div class="cardsave">
+          <span class="cardhint"></span>
+          <button class="btn-sm btn-confirm">✔ 이 항목 확정</button>
         </div>
       </div>`;
     list.appendChild(card);
+    const touch=id=>{ const x=choices[id]||{}; x.confirmed=false; x.committed=false; choices[id]=x; };
     card.querySelector('.choices').addEventListener('click',e=>{
       const b=e.target.closest('button'); if(!b) return;
       const id=it.id, ch=b.dataset.ch;
-      choices[id]={...(choices[id]||{}), choice:ch, ts:new Date().toISOString()};
+      choices[id]={...(choices[id]||{}), choice:ch, ts:new Date().toISOString(), against:it.created||null};
+      touch(id);
       // 버튼 하이라이트
       card.querySelectorAll('.choices button').forEach(x=>x.className='');
       b.className = ch==='rework'?'sel-rework':ch==='hold'?'sel-hold':'sel-go';
       card.querySelector('.notes').classList.toggle('show', ch==='rework');
-      scheduleSave(600);                       // 선택 즉시(짧은 디바운스) 자동 저장
+      refreshCard(card,id);
+      scheduleSave(600);                       // 자동 임시저장은 안전망으로 유지
     });
     const ta=card.querySelector('textarea');
     if(ta) ta.addEventListener('input',e=>{
-      choices[it.id]={...(choices[it.id]||{}), notes:e.target.value};
+      choices[it.id]={...(choices[it.id]||{}), notes:e.target.value, against:it.created||null};
+      touch(it.id);
+      refreshCard(card,it.id);
       scheduleSave(1800);                      // 타이핑 멈추고 1.8초 뒤 저장
     });
+    /* 항목별 확정 — 이 버튼 하나로 "내 말이 접수됐다"가 확실해진다 */
+    card.querySelector('.btn-confirm').onclick=()=>{
+      const cc=choices[it.id]||{};
+      if(!cc.choice) return;
+      if(ta) cc.notes=ta.value;
+      if(cc.choice==='rework' && !(cc.notes||'').trim()){
+        toast('다시 작업은 수정 내용을 적어주세요','err');
+        if(ta) ta.focus();
+        return;
+      }
+      cc.against=it.created||null; cc.ts=cc.ts||new Date().toISOString();
+      cc.confirmed=true; cc.confirmedAt=new Date().toISOString(); cc.fresh=false;
+      pushHistory(cc,{choice:cc.choice,notes:cc.notes,against:cc.against});
+      choices[it.id]=cc;
+      refreshCard(card,it.id);
+      clearTimeout(saveTimer); saveNow(false,`✔ 확정 저장됨 — ${short(it.title||it.id)}`);
+    };
+    refreshCard(card,it.id);
   });
 }
 
-/* ── 2단계 저장: 선택·메모는 자동 '임시저장'(초안), [커밋]을 눌러야 작업 지시가 된다 ── */
-let saveTimer=null, saving=false, dirtyAgain=false, pendingCommit=false;
-function setStat(t){ $('#saveStat').textContent=t; }
-function updateCommitBar(){
-  const dirty = JSON.stringify(choices) !== baselineJson;
-  const n = Object.values(choices).filter(c=>c.choice).length;
-  $('#ncommit').textContent = n;
-  $('#commitbar').classList.toggle('hide', !dirty || n===0);
+/* ── 3단계 저장 ───────────────────────────────────────────────────────
+   1) 자동 임시저장 : 안전망 (끊겨도 안 날아감)
+   2) 항목 확정     : 카드별 [✔ 이 항목 확정] — 이 항목은 확실히 접수됨
+   3) 전체 저장/작업 시작 : 하단 바 — 전부 저장하거나, 이 기준으로 작업 지시 */
+let saveTimer=null, saving=false, dirtyAgain=false, pendingCommit=false, lastSavedAt=null;
+function setStat(t){ const el=$('#saveStat'); if(el) el.textContent=t; }   // 상태는 하단 바·토스트가 담당
+const short=s=>{ s=String(s||''); return s.length>14 ? s.slice(0,14)+'…' : s; };
+function unsaved(){ return JSON.stringify(choices)!==savedJson; }
+function updateBar(){
+  const list=Object.values(choices).filter(c=>c.choice);
+  const pending=list.filter(c=>!c.confirmed).length;
+  $('#ncommit').textContent=list.length;
+  $('#commitbar').classList.toggle('hide', !items.length);
+  $('#btnCommit').disabled = list.length===0;
+  const info=$('#barinfo');
+  if(pending) info.innerHTML=`<b>확정 안 한 항목 ${pending}개</b> — 카드의 [✔ 확정] 또는 [💾 전체 저장]`;
+  else if(saving) info.textContent='저장 중…';
+  else if(unsaved()) info.textContent='저장 대기 중…';
+  else info.textContent = lastSavedAt ? `모두 저장됨 · ${hm(lastSavedAt)}` : '모두 저장됨';
 }
-function scheduleSave(delay){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>saveNow(false), delay); setStat('…'); updateCommitBar(); }
-async function saveNow(commit){
+function scheduleSave(delay){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>saveNow(false), delay); setStat('…'); updateBar(); }
+async function saveNow(commit, okText){
   if(saving){ dirtyAgain=true; pendingCommit=pendingCommit||commit; return; }
-  saving=true; setStat(commit?'커밋 중…':'임시저장 중…');
-  if(commit) committedAt=new Date().toISOString();
+  saving=true; setStat(commit?'커밋 중…':'저장 중…'); updateBar();
+  if(commit){
+    committedAt=new Date().toISOString();
+    // 작업 시작 = 남은 항목까지 전부 확정 처리하고 기록에 남긴다
+    Object.keys(choices).forEach(id=>{
+      const c=choices[id]; if(!c.choice) return;
+      pushHistory(c,{choice:c.choice,notes:c.notes,against:c.against});
+      c.confirmed=true; c.confirmedAt=c.confirmedAt||committedAt; c.committed=true; c.fresh=false;
+    });
+  }
+  const snapshot=JSON.stringify(choices);
   const payload={draft:!commit, committedAt, savedAt:new Date().toISOString(), decisions:choices};
   const mk=()=>{ const b={message:(commit?`갤러리 커밋 `:`갤러리 임시저장 `)+new Date().toISOString().slice(0,16),
     content:b64e(JSON.stringify(payload,null,2))}; if(decSha) b.sha=decSha; return b; };
@@ -247,17 +440,39 @@ async function saveNow(commit){
         r=await gh(`/repos/${OWNER}/${REPO}/contents/${DECISIONS}`,{method:'PUT',body:JSON.stringify(mk())});
       } else throw e;
     }
-    decSha=r.content.sha;
-    const t=new Date(), hm=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+    decSha=r.content.sha; savedJson=snapshot; lastSavedAt=new Date();
     if(commit){
-      baselineJson=JSON.stringify(choices);
-      setStat('✅ 커밋됨 '+hm); updateCommitBar();
-      msg($('#msg'),'✅ 커밋 완료 — 클로드가 이 기준으로 작업을 시작합니다.','ok');
-    } else setStat('임시저장 ✓ '+hm);
-  }catch(e){ setStat('⚠️ 저장 실패'); msg($('#msg'),'저장 실패: '+e.message+' — 잠시 후 다시 시도해 주세요.','err'); }
-  finally{ saving=false; if(dirtyAgain){ dirtyAgain=false; const c=pendingCommit; pendingCommit=false; setTimeout(()=>saveNow(c),400); } }
+      baselineJson=snapshot;
+      setStat('✅ 커밋됨 '+hm(lastSavedAt));
+      toast('✅ 작업 시작 — 이 기준으로 진행합니다','ok');
+      render();
+    }else{
+      setStat('저장 ✓ '+hm(lastSavedAt));
+      toast(okText||'💾 저장됨 '+hm(lastSavedAt),'ok');
+    }
+  }catch(e){
+    setStat('⚠️ 저장 실패');
+    toast('⚠️ 저장 실패 — 다시 눌러주세요','err');
+    msg($('#msg'),'저장 실패: '+e.message,'err');
+  }
+  finally{ saving=false; updateBar();
+    if(dirtyAgain){ dirtyAgain=false; const c=pendingCommit; pendingCommit=false; setTimeout(()=>saveNow(c),400); } }
 }
+/* 전체 저장 — 화면의 모든 입력을 확정 처리하고 한 번에 올린다 */
+$('#btnSaveAll').onclick=()=>{
+  clearTimeout(saveTimer);
+  let n=0;
+  document.querySelectorAll('#list .card').forEach(card=>{
+    const ta=card.querySelector('textarea'); if(!ta) return;
+    const id=ta.dataset.notes, c=choices[id]; if(!c||!c.choice) return;
+    c.notes=ta.value; c.confirmed=true; c.confirmedAt=new Date().toISOString(); c.fresh=false;
+    pushHistory(c,{choice:c.choice,notes:c.notes,against:c.against});
+    refreshCard(card,id); n++;
+  });
+  saveNow(false, n?`💾 전체 저장됨 — ${n}개 확정`:'💾 저장됨 — 확정할 항목이 없어요');
+};
 $('#btnCommit').onclick=()=>{ clearTimeout(saveTimer); saveNow(true); };
+window.addEventListener('beforeunload',e=>{ if(unsaved()){ e.preventDefault(); e.returnValue=''; } });
 
 $('#btnReload').onclick=load;
 load();
