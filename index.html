@@ -60,12 +60,28 @@
   .hide{display:none!important}
   /* 좌우 비교뷰 — 데스크톱은 2단 나란히, 폰(390px)은 탭 전환 */
   .cmp{display:grid;grid-template-columns:1fr;gap:14px}
-  .cmp.two{grid-template-columns:1fr 1fr}
+  .cmp.two{grid-template-columns:1fr 1fr;gap:8px}     /* 폰에서도 기본은 좌우 비교 */
   .pane{min-width:0}
   .cmptabs{display:flex;gap:8px;margin:14px 0 6px}
-  .cmptabs button{flex:1;font-size:13.5px;padding:9px 6px;border-radius:9px;
+  .cmptabs button{flex:1;font-size:13px;padding:9px 6px;border-radius:9px;
     border:1px solid var(--line);background:transparent;color:var(--dim)}
   .cmptabs button.on{background:var(--panel2);color:var(--tx);border-color:var(--accent);font-weight:700}
+  .stylebox{border:1px solid var(--line);border-radius:10px;padding:0 12px;margin-bottom:6px}
+  .stylebox summary{cursor:pointer;padding:11px 0;font-size:13.5px;font-weight:700;
+    color:var(--dim);list-style:none;display:flex;align-items:center;gap:8px}
+  .stylebox summary::-webkit-details-marker{display:none}
+  .stylebox summary::before{content:'▸ ';color:var(--accent)}
+  .stylebox[open] summary::before{content:'▾ '}
+  .stylebox textarea{margin-bottom:12px}
+  /* 좁은 화면: 2단을 유지하되 글자를 줄여 가사 한 줄이 안 접히게 */
+  @media(max-width:899px){
+    .cmp.two .pane textarea, .cmp.two #propText{font-size:12px;line-height:1.5;padding:9px}
+    .cmp.two .taBack{font-size:12px;line-height:1.5;padding:9px}
+    .cmp.two .lbl{font-size:12px;gap:4px}
+    .cmp.two .lbl button{padding:5px 7px;font-size:11px}
+    /* 한쪽만 보기로 전환했을 땐 원래 크기로 */
+    .cmp:not(.two) .pane textarea, .cmp:not(.two) #propText{font-size:14px}
+  }
   #propText{margin:0;padding:12px;background:var(--panel);border:1px solid var(--line);
     border-radius:10px;white-space:pre-wrap;word-break:break-word;
     font:inherit;font-size:14px;line-height:1.6;color:var(--tx);max-height:70vh;overflow:auto}
@@ -147,14 +163,18 @@
   <section id="viewEdit" class="hide">
     <div class="msg" id="edMsg"></div>
 
-    <div class="lbl">🎚️ 스타일 프롬프트 <span class="sp"></span>
-      <button class="btn-sm btn-ghost" data-copy="style">복사</button></div>
-    <textarea id="taStyle" rows="7"></textarea>
+    <!-- 폰에서는 접어둔다 — 안 접으면 화면을 다 먹어서 정작 가사 비교가 아래로 밀린다 -->
+    <details id="styleBox" class="stylebox">
+      <summary>🎚️ 스타일 프롬프트 <span class="sp"></span>
+        <button class="btn-sm btn-ghost" data-copy="style">복사</button></summary>
+      <textarea id="taStyle" rows="7"></textarea>
+    </details>
 
     <!-- 좌: 확정 가사 / 우: 클로드 추천안 (추천안이 있는 곡만 우측 노출) -->
     <div class="cmptabs hide" id="cmpTabs">
-      <button class="on" data-pane="cur">🎵 현재 확정</button>
-      <button data-pane="prop">✨ 클로드 추천안</button>
+      <button class="on" data-pane="both">⇄ 좌우 비교</button>
+      <button data-pane="cur">🎵 현재만 크게</button>
+      <button data-pane="prop">✨ 추천안만 크게</button>
     </div>
     <div class="cmp" id="cmp">
       <div class="pane" id="paneCur">
@@ -300,6 +320,8 @@ async function openSong(f){
     cur={path:f.path,name:f.name,sha:d.sha,raw,styleRange:st,lyricsRange:ly,eol};
     $('#taStyle').value = st?st.text.replace(/\r\n/g,'\n'):'';
     $('#taStyle').disabled = !st;
+    // 넓은 화면은 펼쳐두고, 폰은 접어둔다 (가사 비교가 첫 화면에 오게)
+    $('#styleBox').open = window.matchMedia('(min-width:900px)').matches;
     $('#taLyrics').value = ly.text.replace(/\r\n/g,'\n');
     markClean(); hideMsg($('#edMsg')); autoGrow();
     await refreshPlag(); syncBack();          // 열자마자 표절 의심 구간을 덮어 보여준다
@@ -418,6 +440,7 @@ async function markProposalPlag(text){
 /* 추천안 패널 — 있는 곡만 우측(또는 탭)에 띄운다 */
 function showProposal(prop, why){
   const has = !!(prop && prop.text.trim());
+  if(has) delete $('#paneProp').dataset.empty; else $('#paneProp').dataset.empty='1';
   $('#cmp').classList.toggle('two', has);
   $('#cmpTabs').classList.toggle('hide', !has);
   $('#paneProp').classList.toggle('hide', !has);
@@ -429,17 +452,25 @@ function showProposal(prop, why){
   const w = (why||'').trim();
   $('#propWhy').classList.toggle('hide', !w);
   $('#propWhyBody').textContent = w;
-  setPane('cur');
+  setPane('both');          // 열자마자 좌우 비교가 기본
 }
-/* 폰에서만 의미 있는 탭 전환 — 데스크톱은 CSS가 탭을 숨기고 2단으로 둘 다 보여준다 */
+/* 폰에서도 기본은 '좌우 비교'. 한쪽을 크게 보고 싶을 때만 단일 창으로 전환한다.
+   데스크톱은 CSS가 탭을 숨기고 항상 2단. */
 function setPane(which){
+  const hasProp = !$('#paneProp').dataset.empty;
   if(window.matchMedia('(min-width:900px)').matches){
-    $('#paneCur').classList.remove('hide'); $('#paneProp').classList.remove('hide'); return;
+    $('#cmp').classList.toggle('two', hasProp);
+    $('#paneCur').classList.remove('hide');
+    $('#paneProp').classList.toggle('hide', !hasProp);
+    return;
   }
-  $('#paneCur').classList.toggle('hide', which!=='cur');
-  $('#paneProp').classList.toggle('hide', which!=='prop');
+  const both = (which==='both');
+  $('#cmp').classList.toggle('two', both && hasProp);
+  $('#paneCur').classList.toggle('hide', !both && which!=='cur');
+  $('#paneProp').classList.toggle('hide', (!both && which!=='prop') || !hasProp);
   document.querySelectorAll('#cmpTabs button').forEach(b=>
     b.classList.toggle('on', b.dataset.pane===which));
+  if(typeof syncBack==='function') setTimeout(syncBack,50);   // 폭이 바뀌면 백드롭도 다시
 }
 $('#cmpTabs').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(b) setPane(b.dataset.pane);
