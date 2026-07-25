@@ -77,6 +77,26 @@
   .why[open] summary::before{content:'▾ '}
   .why div{font-size:13.5px;line-height:1.65;white-space:pre-wrap;padding-bottom:12px;color:var(--tx)}
   @media(min-width:900px){ .cmptabs{display:none!important} }
+  /* 표절 의심 구절 — 빨간 그라데이션 오버레이.
+     textarea 안에는 스타일을 못 넣으므로, 같은 타이포로 그린 백드롭을 뒤에 깔고
+     textarea 배경을 투명하게 해서 하이라이트가 글자 아래로 비치게 한다. */
+  .taWrap{position:relative}
+  .taWrap textarea{position:relative;background:transparent;z-index:1}
+  .taBack{position:absolute;inset:0;margin:0;padding:12px;border:1px solid transparent;
+    border-radius:10px;white-space:pre-wrap;word-break:break-word;overflow:hidden;
+    pointer-events:none;color:transparent;z-index:0}
+  .taBack mark{background:linear-gradient(100deg,rgba(248,113,113,.10),rgba(248,113,113,.42),rgba(248,113,113,.14));
+    border-bottom:2px solid rgba(248,113,113,.85);border-radius:3px;color:transparent}
+  .taBack mark.sev3{background:linear-gradient(100deg,rgba(239,68,68,.22),rgba(239,68,68,.62),rgba(239,68,68,.26));
+    border-bottom-color:#ef4444}
+  #propText mark{background:linear-gradient(100deg,rgba(248,113,113,.12),rgba(248,113,113,.42),rgba(248,113,113,.16));
+    border-bottom:2px solid rgba(248,113,113,.8);border-radius:3px;color:var(--tx)}
+  .plagbar{display:none;margin:8px 0 0;padding:10px 12px;border-radius:10px;font-size:13px;
+    background:rgba(248,113,113,.10);border:1px solid rgba(248,113,113,.42);color:#fca5a5}
+  .plagbar.show{display:block}
+  .plagbar b{color:#fecaca}
+  .plagbar ul{margin:6px 0 0;padding-left:18px}
+  .plagbar li{margin:3px 0}
   .spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.25);
     border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px}
   @keyframes s{to{transform:rotate(360deg)}}
@@ -141,7 +161,11 @@
         <div class="lbl">🎵 가사 <span class="sp"></span>
           <span class="dirty hide" id="dirty">● 수정됨</span>
           <button class="btn-sm btn-ghost" data-copy="lyrics">복사</button></div>
-        <textarea id="taLyrics" rows="22"></textarea>
+        <div class="taWrap">
+          <div class="taBack" id="taBack" aria-hidden="true"></div>
+          <textarea id="taLyrics" rows="22"></textarea>
+        </div>
+        <div class="plagbar" id="plagBar"></div>
       </div>
       <div class="pane hide" id="paneProp">
         <div class="lbl">✨ 클로드 추천안 <span class="sp"></span>
@@ -278,7 +302,117 @@ async function openSong(f){
     $('#taStyle').disabled = !st;
     $('#taLyrics').value = ly.text.replace(/\r\n/g,'\n');
     markClean(); hideMsg($('#edMsg')); autoGrow();
+    await refreshPlag(); syncBack();          // 열자마자 표절 의심 구간을 덮어 보여준다
   }catch(e){ msg($('#edMsg'),'불러오기 실패: '+e.message,'err'); }
+}
+
+/* ── 표절 점검 ─────────────────────────────────────────────────────────
+   lyrics/_plag_index.json 은 레퍼런스 가사의 **지문(해시)만** 담는다 — 원문은 없다.
+   여기서 같은 규칙으로 정규화·해시해 겹치는 어절 구간을 찾아 빨간 그라데이션으로 덮는다.
+   ⚠️ 정규화 규칙은 scripts/build_plag_index.py 와 반드시 동일해야 한다. */
+let PLAG=null;
+const PRON={'나':'나','내':'나','제':'나','저':'나','날':'나','내게':'나','나한테':'나',
+            '너':'너','네':'너','널':'너','너한테':'너','네게':'너'};
+async function loadPlagIndex(){
+  if(PLAG) return PLAG;
+  try{
+    const d=await gh(`/repos/${OWNER}/${REPO}/contents/lyrics/_plag_index.json?ref=main`);
+    PLAG=JSON.parse(b64d(d.content));
+  }catch(e){ PLAG={n:2,songs:[],hashes:{}}; }
+  return PLAG;
+}
+/* 원문 토큰과 정규화 결과를 함께 남긴다 — 하이라이트 위치를 원문에 되돌리려면 필요 */
+function tokenize(line){
+  const out=[]; const re=/[가-힣a-zA-Z0-9]+/g; let m;
+  while((m=re.exec(line))){
+    let w=m[0];
+    w=w.replace(/(은|는|이|가|을|를|의|에|도|만|과|와|로|으로|에게|한테|께)$/,'');
+    w=w.replace(/(겠지|는다|었어|았어|더라|네요|어요|구나|잖아|같아|한다|했어|겠어|을까)$/,'');
+    w=PRON[w]||w;
+    if(w) out.push({norm:w, start:m.index, end:m.index+m[0].length});
+  }
+  return out;
+}
+async function sha1hex(s){
+  const b=await crypto.subtle.digest('SHA-1', new TextEncoder().encode(s));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,12);
+}
+/* 한 줄에서 겹치는 문자 구간 [start,end,어절수] 목록 */
+async function plagSpans(line, idx){
+  const t=tokenize(line), n=idx.n||2, hits=[];
+  for(let i=0;i+n<=t.length;i++){
+    const key=await sha1hex(t.slice(i,i+n).map(x=>x.norm).join(' '));
+    const s=idx.hashes[key];
+    if(s!==undefined) hits.push({i, song:idx.songs[s]});
+  }
+  if(!hits.length) return [];
+  const spans=[]; let cur={a:hits[0].i, b:hits[0].i+n, songs:new Set([hits[0].song])};
+  for(const h of hits.slice(1)){
+    if(h.i<=cur.b-n+1){ cur.b=Math.max(cur.b,h.i+n); cur.songs.add(h.song); }
+    else { spans.push(cur); cur={a:h.i,b:h.i+n,songs:new Set([h.song])}; }
+  }
+  spans.push(cur);
+  return spans.map(s=>({start:t[s.a].start, end:t[s.b-1].end,
+                        words:s.b-s.a, songs:[...s.songs]}));
+}
+const escHtml=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+/* 편집칸 뒤 백드롭을 다시 그린다 (본문은 투명, 겹친 구간만 색) */
+async function refreshPlag(){
+  const idx=await loadPlagIndex();
+  const text=$('#taLyrics').value, back=$('#taBack'), bar=$('#plagBar');
+  if(!idx.songs.length){ back.innerHTML=''; bar.classList.remove('show'); return; }
+  const found=[]; let html='';
+  for(const line of text.split('\n')){
+    if(!line.trim() || line.trim().startsWith('[')){ html+=escHtml(line)+'\n'; continue; }
+    const spans=await plagSpans(line, idx);
+    if(!spans.length){ html+=escHtml(line)+'\n'; continue; }
+    let out='', p=0;
+    for(const s of spans){
+      out+=escHtml(line.slice(p,s.start));
+      out+=`<mark class="${s.words>=3?'sev3':''}">${escHtml(line.slice(s.start,s.end))}</mark>`;
+      p=s.end;
+      found.push({text:line.slice(s.start,s.end), words:s.words, songs:s.songs});
+    }
+    html+=out+escHtml(line.slice(p))+'\n';
+  }
+  back.innerHTML=html;
+  if(found.length){
+    const worst=Math.max(...found.map(f=>f.words));
+    bar.innerHTML=`<b>⚠️ 표절 의심 ${found.length}곳</b> (최대 ${worst}어절 겹침) — 빨간 부분을 고쳐주세요`
+      +`<ul>${found.slice(0,5).map(f=>`<li>「${escHtml(f.text)}」 · ${escHtml(f.songs.join(', '))}`
+      +` <span style="opacity:.7">${f.words}어절</span></li>`).join('')}</ul>`
+      +`<div style="opacity:.75;margin-top:6px">관용구는 겹쳐도 표절이 아닙니다 — 최종 판단은 직접</div>`;
+    bar.classList.add('show');
+  }else{ bar.classList.remove('show'); }
+}
+/* 백드롭이 편집칸과 같은 위치·타이포로 그려지고 스크롤도 따라가야 겹침이 정확히 보인다 */
+function syncBack(){
+  const ta=$('#taLyrics'), back=$('#taBack'), cs=getComputedStyle(ta);
+  ['fontSize','fontFamily','lineHeight','letterSpacing','padding'].forEach(k=>back.style[k]=cs[k]);
+  back.style.height=cs.height; back.scrollTop=ta.scrollTop;
+}
+let plagTimer=null;
+function schedulePlag(){ clearTimeout(plagTimer); plagTimer=setTimeout(()=>{ refreshPlag().then(syncBack); }, 500); }
+$('#taLyrics').addEventListener('scroll',()=>{ $('#taBack').scrollTop=$('#taLyrics').scrollTop; });
+
+/* 추천안 쪽은 편집칸이 아니라 <pre> 라서 백드롭 없이 바로 감싼다 */
+async function markProposalPlag(text){
+  const idx=await loadPlagIndex();
+  if(!idx.songs.length) return;
+  let html='';
+  for(const line of text.split('\n')){
+    if(!line.trim() || line.trim().startsWith('[')){ html+=escHtml(line)+'\n'; continue; }
+    const spans=await plagSpans(line, idx);
+    let out='', p=0;
+    for(const s of spans){
+      out+=escHtml(line.slice(p,s.start))
+         + `<mark title="${escHtml(s.songs.join(', '))} · ${s.words}어절">`
+         + escHtml(line.slice(s.start,s.end)) + '</mark>';
+      p=s.end;
+    }
+    html+=out+escHtml(line.slice(p))+'\n';
+  }
+  $('#propText').innerHTML=html.replace(/\n$/,'');
 }
 
 /* 추천안 패널 — 있는 곡만 우측(또는 탭)에 띄운다 */
@@ -289,7 +423,9 @@ function showProposal(prop, why){
   $('#paneProp').classList.toggle('hide', !has);
   $('#paneCur').classList.remove('hide');
   if(!has) return;
-  $('#propText').textContent = prop.text.replace(/\r\n/g,'\n').trim();
+  const ptext = prop.text.replace(/\r\n/g,'\n').trim();
+  $('#propText').textContent = ptext;
+  markProposalPlag(ptext);          // 추천안도 같은 잣대로 검사한다
   const w = (why||'').trim();
   $('#propWhy').classList.toggle('hide', !w);
   $('#propWhyBody').textContent = w;
@@ -326,7 +462,7 @@ $('#btnApply').onclick=()=>{
 function markDirty(){ $('#dirty').classList.remove('hide'); }
 function markClean(){ $('#dirty').classList.add('hide'); }
 $('#taStyle').addEventListener('input',e=>{markDirty();autoGrow(e.target)});
-$('#taLyrics').addEventListener('input',e=>{markDirty();autoGrow(e.target)});
+$('#taLyrics').addEventListener('input',e=>{markDirty();autoGrow(e.target);schedulePlag()});
 /* 높이 자동 조절.
    ⚠️ height:auto 로 접는 순간 문서 높이가 줄어 브라우저가 스크롤을 맨 위로 당긴다.
    → (1) 타이핑 중인 창만 건드리고 (2) 스크롤 위치를 저장·복구해서 점프를 막는다. */
@@ -338,6 +474,7 @@ function autoGrow(target){
     t.style.height=Math.min(t.scrollHeight+4,6000)+'px';
   });
   if(window.scrollY !== y){ docEl.style.scrollBehavior='auto'; window.scrollTo(0,y); docEl.style.scrollBehavior=''; }
+  if(typeof syncBack==='function' && $('#taBack')) syncBack();   // 높이가 바뀌면 백드롭도 맞춘다
 }
 
 /* 원문에서 두 블록만 교체 — 설계 노트는 그대로 보존 */
