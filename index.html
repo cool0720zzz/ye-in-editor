@@ -58,6 +58,25 @@
     display:flex;gap:10px;margin:20px -16px -40px}
   .bar button{flex:1}
   .hide{display:none!important}
+  /* 좌우 비교뷰 — 데스크톱은 2단 나란히, 폰(390px)은 탭 전환 */
+  .cmp{display:grid;grid-template-columns:1fr;gap:14px}
+  .cmp.two{grid-template-columns:1fr 1fr}
+  .pane{min-width:0}
+  .cmptabs{display:flex;gap:8px;margin:14px 0 6px}
+  .cmptabs button{flex:1;font-size:13.5px;padding:9px 6px;border-radius:9px;
+    border:1px solid var(--line);background:transparent;color:var(--dim)}
+  .cmptabs button.on{background:var(--panel2);color:var(--tx);border-color:var(--accent);font-weight:700}
+  #propText{margin:0;padding:12px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;white-space:pre-wrap;word-break:break-word;
+    font:inherit;font-size:14px;line-height:1.6;color:var(--tx);max-height:70vh;overflow:auto}
+  .why{margin-top:10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:0 12px}
+  .why summary{cursor:pointer;padding:10px 0;font-size:13px;font-weight:700;color:var(--dim);list-style:none}
+  .why summary::-webkit-details-marker{display:none}
+  .why summary::before{content:'▸ ';color:var(--accent)}
+  .why[open] summary::before{content:'▾ '}
+  .why div{font-size:13.5px;line-height:1.65;white-space:pre-wrap;padding-bottom:12px;color:var(--tx)}
+  @media(min-width:900px){ .cmptabs{display:none!important} }
   .spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.25);
     border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px}
   @keyframes s{to{transform:rotate(360deg)}}
@@ -112,10 +131,25 @@
       <button class="btn-sm btn-ghost" data-copy="style">복사</button></div>
     <textarea id="taStyle" rows="7"></textarea>
 
-    <div class="lbl">🎵 가사 <span class="sp"></span>
-      <span class="dirty hide" id="dirty">● 수정됨</span>
-      <button class="btn-sm btn-ghost" data-copy="lyrics">복사</button></div>
-    <textarea id="taLyrics" rows="22"></textarea>
+    <!-- 좌: 확정 가사 / 우: 클로드 추천안 (추천안이 있는 곡만 우측 노출) -->
+    <div class="cmptabs hide" id="cmpTabs">
+      <button class="on" data-pane="cur">🎵 현재 확정</button>
+      <button data-pane="prop">✨ 클로드 추천안</button>
+    </div>
+    <div class="cmp" id="cmp">
+      <div class="pane" id="paneCur">
+        <div class="lbl">🎵 가사 <span class="sp"></span>
+          <span class="dirty hide" id="dirty">● 수정됨</span>
+          <button class="btn-sm btn-ghost" data-copy="lyrics">복사</button></div>
+        <textarea id="taLyrics" rows="22"></textarea>
+      </div>
+      <div class="pane hide" id="paneProp">
+        <div class="lbl">✨ 클로드 추천안 <span class="sp"></span>
+          <button class="btn-sm btn-ghost" id="btnApply">← 왼쪽에 적용</button></div>
+        <pre id="propText"></pre>
+        <details class="why" id="propWhy"><summary>추천 근거</summary><div id="propWhyBody"></div></details>
+      </div>
+    </div>
 
     <div class="bar">
       <button class="btn-ghost" id="btnReload">되돌리기</button>
@@ -149,6 +183,14 @@ function msg(el,text,kind){
 function hideMsg(el){ el.className='msg'; }
 
 /* 마커 뒤의 ``` 코드블록 내부 위치를 찾는다 */
+/* `### 추천 근거` 아래 설명을 다음 제목/구분선 전까지 뽑는다 */
+function grabWhy(text){
+  const i = text.indexOf('### 추천 근거');
+  if(i < 0) return '';
+  const rest = text.slice(i + '### 추천 근거'.length);
+  const stop = rest.search(/\n(#{2,3} |---)/);
+  return (stop < 0 ? rest : rest.slice(0, stop)).trim();
+}
 function findFenced(text,marker){
   const mi = text.indexOf(marker); if(mi<0) return null;
   const open = text.indexOf('```',mi); if(open<0) return null;
@@ -229,6 +271,7 @@ async function openSong(f){
     const st=findFenced(raw,'**Style of Music:**');
     const ly=findFenced(raw,'## 가사');
     if(!ly){ msg($('#edMsg'),'이 파일에서 가사 블록을 찾지 못했어요.','err'); return; }
+    showProposal(findFenced(raw,'## 추천안'), grabWhy(raw));
     const eol = raw.includes('\r\n') ? '\r\n' : '\n';   // 파일의 줄바꿈 방식 보존
     cur={path:f.path,name:f.name,sha:d.sha,raw,styleRange:st,lyricsRange:ly,eol};
     $('#taStyle').value = st?st.text.replace(/\r\n/g,'\n'):'';
@@ -237,6 +280,48 @@ async function openSong(f){
     markClean(); hideMsg($('#edMsg')); autoGrow();
   }catch(e){ msg($('#edMsg'),'불러오기 실패: '+e.message,'err'); }
 }
+
+/* 추천안 패널 — 있는 곡만 우측(또는 탭)에 띄운다 */
+function showProposal(prop, why){
+  const has = !!(prop && prop.text.trim());
+  $('#cmp').classList.toggle('two', has);
+  $('#cmpTabs').classList.toggle('hide', !has);
+  $('#paneProp').classList.toggle('hide', !has);
+  $('#paneCur').classList.remove('hide');
+  if(!has) return;
+  $('#propText').textContent = prop.text.replace(/\r\n/g,'\n').trim();
+  const w = (why||'').trim();
+  $('#propWhy').classList.toggle('hide', !w);
+  $('#propWhyBody').textContent = w;
+  setPane('cur');
+}
+/* 폰에서만 의미 있는 탭 전환 — 데스크톱은 CSS가 탭을 숨기고 2단으로 둘 다 보여준다 */
+function setPane(which){
+  if(window.matchMedia('(min-width:900px)').matches){
+    $('#paneCur').classList.remove('hide'); $('#paneProp').classList.remove('hide'); return;
+  }
+  $('#paneCur').classList.toggle('hide', which!=='cur');
+  $('#paneProp').classList.toggle('hide', which!=='prop');
+  document.querySelectorAll('#cmpTabs button').forEach(b=>
+    b.classList.toggle('on', b.dataset.pane===which));
+}
+$('#cmpTabs').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(b) setPane(b.dataset.pane);
+});
+window.addEventListener('resize',()=>{
+  const on=document.querySelector('#cmpTabs button.on');
+  setPane(on?on.dataset.pane:'cur');
+});
+/* 추천안을 왼쪽 편집칸으로 — 커밋 전이라 되돌리기로 취소 가능 */
+$('#btnApply').onclick=()=>{
+  const t=$('#propText').textContent;
+  if(!t.trim()) return;
+  if(!confirm('추천안을 왼쪽 편집칸에 넣을까요?\n(아직 깃허브에 반영되진 않아요 — [확정]을 눌러야 저장됩니다)')) return;
+  $('#taLyrics').value=t;
+  markDirty(); autoGrow($('#taLyrics'));
+  setPane('cur');
+  msg($('#edMsg'),'추천안을 넣었어요. 확인하고 <b>확정</b>을 누르면 반영됩니다.','info');
+};
 
 function markDirty(){ $('#dirty').classList.remove('hide'); }
 function markClean(){ $('#dirty').classList.add('hide'); }
