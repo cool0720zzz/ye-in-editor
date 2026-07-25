@@ -29,9 +29,17 @@ const dec = JSON.parse(fs.readFileSync(decPath,'utf8'));
 const man = JSON.parse(fs.readFileSync(manPath,'utf8'));
 const items = man.items.map(({id,title,created}) => ({id,title,created}));
 
-console.log(`\n[1] 실제 decisions.json 승격 — 기존 메모가 기록으로 보존되는가 (${decPath})`);
-const r1 = run(items, dec.decisions, dec.draft === false).choices;
+/* [1]~[3]은 이행·누적 "로직" 검사다. 예전엔 실데이터가 평면(구형식)이라 그대로 썼지만,
+   폰 저장을 거치며 실데이터가 history 형식으로 이행돼 전제가 깨졌다(2026-07-25).
+   → 실데이터에서 구형식 픽스처를 합성해 로직을 검사한다. 실데이터 자체는 [4]에서 멱등성으로 검증. */
+console.log(`\n[1] 평면(구형식) → 기록 승격 — 이행 로직 (${decPath} 에서 합성)`);
+const flat = {};
 for(const [id, c] of Object.entries(dec.decisions)){
+  if(!(c.choice || (c.notes||'').trim())) continue;
+  flat[id] = { choice: c.choice||'', ts: c.ts, notes: c.notes||'' };
+}
+const r1 = run(items, flat, dec.draft === false).choices;
+for(const [id, c] of Object.entries(flat)){
   const n = r1[id];
   const old = (c.notes||'').trim();
   ok(Array.isArray(n.history) && n.history.length === 1, `${id}: 기록 1건 생성`);
@@ -42,25 +50,31 @@ for(const [id, c] of Object.entries(dec.decisions)){
 }
 
 console.log('\n[2] 새 버전 발행 — 이전 피드백이 기록으로 넘어가고 입력칸이 비는가');
-const target = 'a05-sinho-redlight';
-const bumped = items.map(it => it.id === target ? {...it, created:'2026-07-25 09:00'} : it);
-const r2 = run(bumped, r1, true).choices;
-const t2 = r2[target];
+const T = 't-main', OTHER = 't-other';
+const w1 = [{id:T, title:'대상', created:'2026-07-24 22:04'},
+            {id:OTHER, title:'그외', created:'2026-07-24 22:04'}];
+const p1 = run(w1, {
+  [T]:     {choice:'rework', notes:'예인이도 뒷모습으로', ts:'2026-07-24T13:00:00.000Z'},
+  [OTHER]: {choice:'rework', notes:'이건 그대로', ts:'2026-07-24T13:00:00.000Z'},
+}, true).choices;
+const w2 = w1.map(it => it.id === T ? {...it, created:'2026-07-25 09:00'} : it);
+const r2 = run(w2, p1, true).choices;
+const t2 = r2[T];
 ok(t2.history.length === 1, '기록은 1건 (같은 내용 중복 안 쌓임)');
 ok(t2.history[0].notes.includes('뒷모습'), '지난 피드백 원문이 기록에 남음');
 ok(t2.choice === '' && t2.notes === '', '입력칸은 비워짐 — 새 판에 대해 새로 적게');
 ok(t2.fresh === true, 'fresh 표시 — "새 버전 올라옴" 안내 노출');
 ok(t2.against === '2026-07-25 09:00', 'against 가 새 버전으로 갱신');
 ok(t2.confirmed === false && t2.committed === false, '확정 상태 초기화');
-ok(r2['a04-beonhwaga-crowd'].notes === r1['a04-beonhwaga-crowd'].notes, '갱신 안 된 항목은 그대로');
+ok(r2[OTHER].notes === p1[OTHER].notes, '갱신 안 된 항목은 그대로');
 
 console.log('\n[3] 새 판에 새 피드백 → 2건으로 누적');
 const r3in = JSON.parse(JSON.stringify(r2));
-r3in[target] = {...r3in[target], choice:'rework', notes:'가로등을 더 따뜻하게', against:'2026-07-25 09:00'};
-const r3 = run(bumped.map(it => it.id === target ? {...it, created:'2026-07-26 10:00'} : it), r3in, true).choices;
-ok(r3[target].history.length === 2, '기록 2건으로 누적');
-ok(r3[target].history[0].notes.includes('뒷모습') && r3[target].history[1].notes.includes('가로등'), '시간순 정렬');
-ok(r3[target].history[0].against === '2026-07-24 22:04' && r3[target].history[1].against === '2026-07-25 09:00',
+r3in[T] = {...r3in[T], choice:'rework', notes:'가로등을 더 따뜻하게', against:'2026-07-25 09:00'};
+const r3 = run(w2.map(it => it.id === T ? {...it, created:'2026-07-26 10:00'} : it), r3in, true).choices;
+ok(r3[T].history.length === 2, '기록 2건으로 누적');
+ok(r3[T].history[0].notes.includes('뒷모습') && r3[T].history[1].notes.includes('가로등'), '시간순 정렬');
+ok(r3[T].history[0].against === '2026-07-24 22:04' && r3[T].history[1].against === '2026-07-25 09:00',
    '각 피드백이 어느 버전에 대한 것인지 남음');
 
 console.log('\n[4] 멱등성 — 여러 번 불러도 기록이 부풀지 않는가');

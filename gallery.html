@@ -232,6 +232,16 @@ async function gh(path,opts){
   if(!r.ok){ let d=''; try{ d=(await r.json()).message||''; }catch(e){} throw new Error(`${r.status} ${d}`); }
   return r.json();
 }
+/* raw 미디어 타입 — Contents API의 1MB 인라인 한도를 우회 (100MB까지, base64 오버헤드 없음).
+   manifest 전용: sha가 필요 없는 읽기라 가능. decisions는 PUT용 sha가 필요해 gh() 유지 */
+async function ghRaw(path){
+  const r=await fetch(API+path,{headers:{
+    'Authorization':'Bearer '+token,
+    'Accept':'application/vnd.github.raw',
+    'X-GitHub-Api-Version':'2022-11-28'}});
+  if(!r.ok){ let d=''; try{ d=(await r.json()).message||''; }catch(e){} throw new Error(`${r.status} ${d}`); }
+  return r.json();
+}
 
 /* 토큰 */
 $('#btnTok').onclick=()=>{ $('#tokIn').value=''; hideMsg($('#tokMsg')); show('viewToken'); };
@@ -248,8 +258,7 @@ async function load(){
   show('view'); hideMsg($('#msg')); $('#list').innerHTML='';
   msg($('#msg'),'불러오는 중…','info');
   try{
-    const d=await gh(`/repos/${OWNER}/${REPO}/contents/${MANIFEST}?ref=main&t=${Date.now()}`);
-    const data=JSON.parse(b64d(d.content));
+    const data=await ghRaw(`/repos/${OWNER}/${REPO}/contents/${MANIFEST}?ref=main&t=${Date.now()}`);
     items=data.items||[];
     // 기존 결정 로드 (있으면 미제출 선택 복원)
     choices={}; decSha=null;

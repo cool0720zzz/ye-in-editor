@@ -32,6 +32,10 @@ def handle(route, request):
         return route.fulfill(status=200, headers=CORS, content_type="application/json",
                              body=json.dumps({"content": {"sha": "sha%d" % len(puts)}}))
     body = manifest if "manifest.json" in request.url else decisions
+    # raw 미디어 타입 요청(manifest 경로)은 파일 원문을 그대로 — 실제 API와 동일하게
+    if "vnd.github.raw" in (request.headers.get("accept") or ""):
+        return route.fulfill(status=200, headers=CORS,
+                             content_type="application/json", body=body)
     route.fulfill(status=200, headers=CORS, content_type="application/json",
                   body=json.dumps({"sha": "sha0", "content": b64(body)}))
 
@@ -95,8 +99,16 @@ with sync_playwright() as p:
     a04 = saved["decisions"]["a04-beonhwaga-crowd"]
     check(saved["draft"] is True, "확정은 초안 저장 (작업 지시는 아님)")
     check(a04["confirmed"] is True, "confirmed 플래그 저장됨")
-    check(len(a04["history"]) == 2, f"피드백이 2건으로 누적됨 (실제 {len(a04['history'])}건)")
-    check("바닥쪽" in a04["history"][0]["notes"] and "숄더백" in a04["history"][1]["notes"], "옛 피드백 + 새 피드백 둘 다 보존")
+    # 기존 이력 개수는 데이터마다 다르다(구형식=승격 1건, 신형식=쌓인 만큼) — 상대 검증
+    base_h = json.loads(decisions)["decisions"]["a04-beonhwaga-crowd"].get("history", [])
+    base_n = len([h for h in base_h if h.get("choice") or (h.get("notes") or "").strip()]) or 1
+    check(len(a04["history"]) == base_n + 1,
+          f"피드백이 기존 {base_n}건 + 새 1건으로 누적됨 (실제 {len(a04['history'])}건)")
+    prev = [(h.get("notes") or "") for h in base_h
+            if h.get("choice") or (h.get("notes") or "").strip()]
+    kept = [(h.get("notes") or "") for h in a04["history"][:-1]]
+    preserved = (kept == prev) if prev else (len(kept) == 1)   # 구형식이면 승격분 1건
+    check("숄더백" in a04["history"][-1]["notes"] and preserved, "옛 피드백 + 새 피드백 둘 다 보존")
 
     print("\n[4] [작업 시작] 클릭")
     pg.locator("#btnCommit").click()
