@@ -118,6 +118,22 @@
   a{color:var(--accent)}
   .hide{display:none!important}
   .pill{font-size:12px;color:var(--dim)}
+  /* 버전 뷰어 — 카드 이미지를 탭하면 생성본들을 넘겨보고, 지정해서 확정/수정 */
+  .thumb{cursor:zoom-in}
+  .viewer{position:fixed;inset:0;z-index:50;background:rgba(8,10,14,.97);display:none;flex-direction:column}
+  .viewer.show{display:flex}
+  .vhead{display:flex;align-items:center;gap:10px;padding:12px 16px calc(12px + env(safe-area-inset-top,0)/3);border-bottom:1px solid var(--line)}
+  .vhead .title{flex:1;font-size:15px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .vmain{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:8px}
+  .vmain img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px}
+  .vcap{padding:2px 16px 8px;text-align:center;font-size:12.5px;color:var(--dim)}
+  .vstrip{display:flex;gap:8px;overflow-x:auto;padding:10px 16px;border-top:1px solid var(--line)}
+  .vth{flex:none;width:96px;border-radius:8px;border:2px solid var(--line);overflow:hidden;background:#000;position:relative;cursor:pointer}
+  .vth img{width:100%;height:60px;object-fit:cover;display:block}
+  .vth.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .vth .vtag{position:absolute;left:0;right:0;bottom:0;font-size:9.5px;text-align:center;background:rgba(0,0,0,.68);color:#cfd6e4;padding:1px 2px}
+  .vbtns{display:flex;gap:10px;padding:10px 16px calc(14px + env(safe-area-inset-bottom,0))}
+  .vbtns button{flex:1;font-size:14px;padding:12px 6px}
 </style>
 </head>
 <body>
@@ -150,6 +166,21 @@
 </main>
 
 
+<!-- 버전 뷰어 — 생성본들 중에서 지정 확정/수정 -->
+<div id="viewer" class="viewer">
+  <div class="vhead">
+    <span class="title" id="vTitle"></span>
+    <button class="btn-sm" id="vClose">✕ 닫기</button>
+  </div>
+  <div class="vmain"><img id="vImg" alt=""></div>
+  <div class="vcap" id="vCap"></div>
+  <div class="vstrip" id="vStrip"></div>
+  <div class="vbtns">
+    <button id="vPick" class="btn-confirm">🎯 이 이미지로 확정</button>
+    <button id="vRework">🔄 이걸 기준으로 수정</button>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <div id="commitbar" class="savebar hide">
@@ -177,7 +208,8 @@ function msg(el,text,kind){ el.className='msg show '+(kind||'info'); el.innerHTM
 function hideMsg(el){ el.className='msg'; }
 function show(v){ ['viewToken','view'].forEach(x=>$('#'+x).classList.add('hide')); $('#'+v).classList.remove('hide'); }
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const CH_LABEL={rework:'🔄 다시 작업',hold:'⏸ 보류',continue:'▶ 이어가기',done:'✓ 완료'};
+const CH_LABEL={rework:'🔄 다시 작업',hold:'⏸ 보류',continue:'▶ 이어가기',done:'✓ 완료',confirm:'🎯 이 이미지로 확정'};
+const verName=v=>!v?'':(v==='current'?'현재판':v+' 판');
 function hm(d){ d=d||new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 function fmtTs(iso){
   if(!iso) return '';
@@ -247,8 +279,10 @@ function pushHistory(c, e){
   const notes=(e.notes||'').trim();
   if(!e.choice && !notes) return false;
   const last=c.history[c.history.length-1];
-  if(last && last.choice===(e.choice||'') && (last.notes||'')===notes) return false;  // 중복 방지
-  c.history.push({ts:e.ts||new Date().toISOString(), choice:e.choice||'', notes, against:e.against||null});
+  if(last && last.choice===(e.choice||'') && (last.notes||'')===notes
+     && (last.variant||null)===(e.variant||null)) return false;  // 중복 방지
+  c.history.push({ts:e.ts||new Date().toISOString(), choice:e.choice||'', notes,
+    against:e.against||null, variant:e.variant||null});
   return true;
 }
 /* 불러온 데이터를 현재 manifest 기준으로 정리 */
@@ -292,10 +326,11 @@ function refreshCard(card,id){
   btn.disabled=!has;
   btn.classList.toggle('done', has && !!c.confirmed);
   btn.textContent = (has && c.confirmed) ? '✔ 확정됨' : '✔ 이 항목 확정';
-  hint.textContent = !has ? '위에서 하나 고르면 확정할 수 있어요'
+  const tgt=c.variant?`🎯 ${verName(c.variant)} 대상 · `:'';
+  hint.textContent = tgt + (!has ? '위에서 하나 고르면 확정할 수 있어요'
     : c.committed ? '작업 지시가 들어갔어요'
     : c.confirmed ? '저장됐어요 — 아래 [작업 시작]을 누르면 진행합니다'
-    : '아직 확정 전이에요 — 이 버튼을 눌러주세요';
+    : '아직 확정 전이에요 — 이 버튼을 눌러주세요');
   updateBar();
 }
 
@@ -318,7 +353,7 @@ function render(){
           ${hist.map((h,i)=>`<div class="histrow">
               <span class="histno">${i+1}</span>
               <div>
-                <div class="histmeta">${esc(fmtTs(h.ts))}${h.against?' · '+esc(h.against)+' 버전에 대해':''} · ${esc(CH_LABEL[h.choice]||h.choice||'')}</div>
+                <div class="histmeta">${esc(fmtTs(h.ts))}${h.against?' · '+esc(h.against)+' 버전에 대해':''} · ${esc(CH_LABEL[h.choice]||h.choice||'')}${h.variant?' · 대상: '+esc(verName(h.variant)):''}</div>
                 ${h.notes?`<div class="histnote">${esc(h.notes)}</div>`:''}
               </div>
             </div>`).join('')}
@@ -329,6 +364,7 @@ function render(){
         <div class="row1">
           <span class="badge ${bg[0]}">${bg[1]}</span>
           <span class="title">${esc(it.title||it.id)}</span>
+          ${(it.variants&&it.variants.length)?`<span class="pill">🖼 ${it.variants.length+1}판</span>`:''}
           ${statusHtml}
           <span class="mystate"></span>
         </div>
@@ -352,11 +388,14 @@ function render(){
         </div>
       </div>`;
     list.appendChild(card);
+    const th=card.querySelector('.thumb');
+    if(th) th.onclick=()=>openViewer(it);          // 이미지 탭 → 버전 뷰어
     const touch=id=>{ const x=choices[id]||{}; x.confirmed=false; x.committed=false; choices[id]=x; };
     card.querySelector('.choices').addEventListener('click',e=>{
       const b=e.target.closest('button'); if(!b) return;
       const id=it.id, ch=b.dataset.ch;
-      choices[id]={...(choices[id]||{}), choice:ch, ts:new Date().toISOString(), against:it.created||null};
+      // 행 버튼은 현재판 대상 — 뷰어에서 고른 variant 지정을 해제
+      choices[id]={...(choices[id]||{}), choice:ch, ts:new Date().toISOString(), against:it.created||null, variant:null};
       touch(id);
       // 버튼 하이라이트
       card.querySelectorAll('.choices button').forEach(x=>x.className='');
@@ -472,6 +511,68 @@ $('#btnSaveAll').onclick=()=>{
   saveNow(false, n?`💾 전체 저장됨 — ${n}개 확정`:'💾 저장됨 — 확정할 항목이 없어요');
 };
 $('#btnCommit').onclick=()=>{ clearTimeout(saveTimer); saveNow(true); };
+
+/* ── 버전 뷰어 ─────────────────────────────────────────────────────────
+   카드 이미지를 탭하면 이 항목의 생성본들(현재판 + 보관된 이전 판)을 넘겨보고,
+   특정 판을 [🎯 확정]하거나 [🔄 그 판 기준으로 수정]을 지정한다.
+   지정 결과는 choices[id].variant 로 저장돼 클로드가 어느 판을 기준 삼을지 안다. */
+let vItem=null, vSel=null;
+function versionsOf(it){
+  const vs=[{vid:'current', created:it.created, verdict:it.verdict, thumb:it.thumb}];
+  (it.variants||[]).slice().reverse().forEach(v=>vs.push(
+    {vid:v.vid||v.created||'', created:v.created||'', verdict:v.verdict||'', thumb:v.thumb||''}));
+  return vs;
+}
+function selectVer(v,el){
+  vSel=v;
+  document.querySelectorAll('#vStrip .vth').forEach(x=>x.classList.remove('on'));
+  if(el) el.classList.add('on');
+  $('#vImg').src=v.thumb||'';
+  $('#vCap').textContent = verName(v.vid)
+    + (v.verdict?' · '+v.verdict:'')
+    + (v.vid!=='current'&&!v.thumb?' · (구판이라 썸네일 없음)':'');
+}
+function openViewer(it){
+  vItem=it;
+  const vs=versionsOf(it);
+  $('#vTitle').textContent=it.title||it.id;
+  const strip=$('#vStrip'); strip.innerHTML='';
+  vs.forEach((v,i)=>{
+    const d=document.createElement('div'); d.className='vth';
+    d.innerHTML=(v.thumb?`<img src="${v.thumb}" alt="">`:'<div style="height:60px"></div>')
+      +`<span class="vtag">${v.vid==='current'?'현재판':esc((v.created||v.vid).slice(5))}</span>`;
+    d.onclick=()=>selectVer(v,d);
+    strip.appendChild(d);
+  });
+  selectVer(vs[0], strip.firstChild);
+  $('#viewer').classList.add('show');
+}
+$('#vClose').onclick=()=>$('#viewer').classList.remove('show');
+$('#vPick').onclick=()=>{
+  if(!vItem||!vSel) return;
+  const id=vItem.id, c=choices[id]||{};
+  c.choice='confirm'; c.variant=vSel.vid;
+  c.ts=new Date().toISOString(); c.against=vItem.created||null;
+  c.confirmed=true; c.confirmedAt=c.ts; c.fresh=false;
+  pushHistory(c,{choice:'confirm',notes:c.notes,against:c.against,variant:vSel.vid});
+  choices[id]=c;
+  $('#viewer').classList.remove('show');
+  render();
+  clearTimeout(saveTimer); saveNow(false,`🎯 확정 저장됨 — ${verName(vSel.vid)}`);
+};
+$('#vRework').onclick=()=>{
+  if(!vItem||!vSel) return;
+  const id=vItem.id, c=choices[id]||{};
+  c.choice='rework'; c.variant=vSel.vid;
+  c.ts=new Date().toISOString(); c.against=vItem.created||null;
+  c.confirmed=false; c.committed=false;
+  choices[id]=c;
+  $('#viewer').classList.remove('show');
+  render();
+  toast(`🔄 ${verName(vSel.vid)} 기준 수정 — 메모 적고 [✔ 확정]을 눌러주세요`);
+  const ta=document.querySelector(`textarea[data-notes="${(window.CSS&&CSS.escape)?CSS.escape(id):id}"]`);
+  if(ta){ ta.scrollIntoView({behavior:'smooth',block:'center'}); setTimeout(()=>ta.focus(),350); }
+};
 window.addEventListener('beforeunload',e=>{ if(unsaved()){ e.preventDefault(); e.returnValue=''; } });
 
 $('#btnReload').onclick=load;
