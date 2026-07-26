@@ -235,8 +235,15 @@ function grabWhy(text){
   const stop = rest.search(/\n(#{2,3} |---)/);
   return (stop < 0 ? rest : rest.slice(0, stop)).trim();
 }
+/* 마커는 반드시 '줄 맨 앞'에 있는 것만 제목으로 친다.
+   본문에서 `## 가사` 처럼 백틱으로 인용만 해도 indexOf가 거기에 걸려
+   엉뚱한 코드펜스를 가사로 잡고, 저장 시 그걸 덮어쓰는 사고가 났다. */
 function findFenced(text,marker){
-  const mi = text.indexOf(marker); if(mi<0) return null;
+  let mi = -1;
+  for(let i = text.indexOf(marker); i >= 0; i = text.indexOf(marker, i+1)){
+    if(i === 0 || text[i-1] === '\n'){ mi = i; break; }
+  }
+  if(mi < 0) return null;
   const open = text.indexOf('```',mi); if(open<0) return null;
   const nl = text.indexOf('\n',open); if(nl<0) return null;
   const close = text.indexOf('\n```',nl); if(close<0) return null;

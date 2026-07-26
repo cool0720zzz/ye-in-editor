@@ -5,10 +5,31 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 HERE = Path(__file__).parent
-song = Path(sys.argv[1]).read_text(encoding="utf-8")
+songpath = Path(sys.argv[1])
+song = songpath.read_text(encoding="utf-8")
 index_json = Path(sys.argv[2]).read_text(encoding="utf-8")
 outdir = Path(sys.argv[3]) if len(sys.argv) > 3 else HERE / "_cmptest"
 outdir.mkdir(exist_ok=True)
+
+# 기대 구절은 곡 파일에서 **뽑아 쓴다.** 예전엔 특정 곡의 한 줄을 박아놨는데,
+# 그 줄이 개정되자(조사 하나) 본문 취소선에만 남아 "저장됨" 검사가 헛통과했다(2026-07-26).
+def fenced(text, marker):
+    i = text.find(marker)
+    while i >= 0 and not (i == 0 or text[i - 1] == "\n"):
+        i = text.find(marker, i + 1)          # 줄 맨 앞의 제목만 인정 (앱과 같은 규칙)
+    if i < 0:
+        return ""
+    nl = text.find("\n", text.find("```", i))
+    return text[nl + 1:text.find("\n```", nl)]
+
+_prop = fenced(song, "## 추천안")
+_cur = fenced(song, "## 가사")
+# 추천안에만 있고 기존 가사엔 없는 줄이라야 '바뀌었다'를 증명한다
+NEEDLE = next((l.strip() for l in _prop.splitlines()
+               if len(l.strip()) >= 6 and not l.startswith("[") and l.strip() not in _cur), "")
+if not NEEDLE:
+    sys.exit(f"[중단] {songpath.name}: 기존 가사와 구별되는 추천안 구절이 없습니다.")
+print(f"기준 구절(추천안에서 자동 추출): {NEEDLE!r}\n")
 
 b64 = lambda s: base64.b64encode(s.encode()).decode()
 Handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(HERE))
@@ -36,7 +57,7 @@ def handle(route, request):
                                  content_type="application/json", body=index_json)
         body = json.dumps({"sha": "s", "content": b64(index_json)})
     elif u.rstrip("/").endswith("contents/lyrics"):
-        body = json.dumps([{"name": "A04_번화가.md", "path": "lyrics/A04_번화가.md", "type": "file"}])
+        body = json.dumps([{"name": songpath.name, "path": "lyrics/"+songpath.name, "type": "file"}])
     else:
         body = json.dumps({"sha": "s", "content": b64(song)})
     route.fulfill(status=200, headers=CORS, content_type="application/json", body=body)
@@ -67,8 +88,8 @@ with sync_playwright() as p:
     before = pg.locator("#taLyrics").input_value()
     prop = pg.locator("#propText").inner_text()
     check(before.strip() != prop.strip(), "좌(기존) 와 우(추천안) 내용이 다름")
-    check("아무도 내 이름을 안 불러" in prop, "추천안에 제안 구절이 보임")
-    check("아무도 내 이름을 안 불러" not in before, "기존 가사는 아직 안 바뀜")
+    check(NEEDLE in prop, "추천안에 제안 구절이 보임")
+    check(NEEDLE not in before, "기존 가사는 아직 안 바뀜")
     check(pg.locator("#propWhy").count() == 1, "추천 근거 접이식 노출")
     pg.screenshot(path=str(outdir / "1_좌우비교.png"), full_page=False)
 
@@ -81,7 +102,7 @@ with sync_playwright() as p:
     pg.click("#btnApply")
     pg.wait_for_timeout(600)
     after = pg.locator("#taLyrics").input_value()
-    check("아무도 내 이름을 안 불러" in after, "적용 후 왼쪽이 추천안으로 바뀜")
+    check(NEEDLE in after, "적용 후 왼쪽이 추천안으로 바뀜")
     check(len(puts) == 0, "아직 저장 안 됨 — [확정] 전")
     pg.screenshot(path=str(outdir / "2_적용후.png"), full_page=False)
     pg.click("#btnCommit")
@@ -89,7 +110,7 @@ with sync_playwright() as p:
     check(len(puts) == 1, "[확정] 눌러야 깃허브에 반영")
     if puts:
         saved = base64.b64decode(puts[0]["content"]).decode()
-        check("아무도 내 이름을 안 불러" in saved, "선택한 가사가 저장됨")
+        check(NEEDLE in saved, "선택한 가사가 저장됨")
         check("## 추천안" in saved, "추천안 섹션은 파일에 그대로 보존")
     check(not errs, f"끝까지 JS 에러 없음 {errs[:2]}")
     b.close()
