@@ -42,6 +42,26 @@
   /* 문서는 곡보다 한 단계 죽여서, 목록에서 곡이 먼저 눈에 들어오게 한다 */
   .song.doc{background:transparent;padding:11px 14px;margin-bottom:6px}
   .song.doc b{font-size:14px;font-weight:500;color:var(--dim)}
+  /* ---------- 곡 지도 ---------- */
+  .song.mapbtn{background:linear-gradient(135deg,#17202c,#141a23);border-color:#2b3a4e;margin-bottom:16px}
+  .mapwrap{position:relative;background:#0d1117;border:1px solid var(--line);border-radius:14px;
+    overflow:hidden;touch-action:none}
+  #mapSvg{display:block;width:100%;height:auto;cursor:grab}
+  #mapSvg.drag{cursor:grabbing}
+  .maphint{position:absolute;left:10px;bottom:8px;font-size:11px;color:var(--dim);
+    pointer-events:none;opacity:.8}
+  .mapaxes{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0 4px;font-size:11.5px;
+    color:var(--dim)}
+  .mapaxes i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;
+    vertical-align:-1px}
+  .mapaxes button{margin-left:auto}
+  .mapinfo{margin:12px 0;padding:13px 15px;background:var(--panel);border:1px solid #2b3a4e;
+    border-radius:12px;font-size:13.5px;line-height:1.7}
+  .mapinfo h4{margin:0 0 6px;font-size:16px}
+  .mapinfo .kv{color:var(--dim)}
+  .mapinfo .close{margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+  .mapdot{cursor:pointer}
+  .mapdot:hover circle,.mapdot.on circle{stroke:#fff;stroke-width:2}
   .listsep{display:flex;align-items:baseline;gap:8px;margin:26px 0 12px;
     padding-top:16px;border-top:1px solid var(--line);font-size:13px;color:var(--dim)}
   .listsep span{font-size:11px;opacity:.65}
@@ -191,10 +211,29 @@
   <!-- 곡 목록 -->
   <section id="viewList" class="hide">
     <div class="msg info show" id="listMsg"><span class="spin"></span> 불러오는 중…</div>
+    <button class="song mapbtn" id="btnMap"><div><b>🗺️ 곡 지도</b>
+      <div class="meta">BPM · 밝기 · 시선 3축으로 한눈에</div></div><span class="arrow">›</span></button>
     <div id="songs"></div>
     <!-- 곡이 아닌 문서(기획·스터디·가이드)는 경계선 아래로 내린다 -->
     <div id="docsSep" class="listsep hide">📄 문서 <span>읽기 전용 · 가사 아님</span></div>
     <div id="docs"></div>
+  </section>
+
+  <!-- 곡 지도: 3축 산점도 + 표 -->
+  <section id="viewMap" class="hide">
+    <div class="msg" id="mapMsg"></div>
+    <div class="mapwrap">
+      <svg id="mapSvg" viewBox="0 0 400 400" aria-label="곡 지도"></svg>
+      <div class="maphint">손가락으로 <b>돌려보세요</b> · 점을 누르면 곡 정보</div>
+    </div>
+    <div class="mapaxes">
+      <span><i style="background:#e0574a"></i>X 가로 · BPM</span>
+      <span><i style="background:#4ac07a"></i>Y 세로 · 밝기</span>
+      <span><i style="background:#4a8fe0"></i>Z 깊이 · 시선</span>
+      <button class="btn-sm btn-ghost" id="btnMapReset">각도 초기화</button>
+    </div>
+    <div id="mapInfo" class="mapinfo hide"></div>
+    <div id="mapTable"></div>
   </section>
 
   <!-- 문서 읽기 전용 -->
@@ -261,16 +300,153 @@ function b64e(str){
   return btoa(bin);
 }
 function show(view){
-  ['viewToken','viewList','viewEdit','viewDoc'].forEach(v=>$('#'+v).classList.add('hide'));
+  ['viewToken','viewList','viewEdit','viewDoc','viewMap'].forEach(v=>$('#'+v).classList.add('hide'));
   $('#'+view).classList.remove('hide');
-  $('#btnBack').style.display = (view==='viewEdit'||view==='viewDoc') ? '' : 'none';
+  $('#btnBack').style.display = (view==='viewList'||view==='viewToken') ? 'none' : '';
 }
+
+/* 곡 지도 — 열기 · 각도 초기화 · 드래그 회전(포인터 이벤트 하나로 마우스·터치 같이 받는다) */
+$('#btnMap').onclick = openMap;
+$('#btnMapReset').onclick = () => { mapYaw = MAP_YAW0; mapPitch = MAP_PITCH0; mapDraw(); };
+/* ⚠️ 점 선택을 자식 <g> 의 click 으로 받으면 안 된다 —
+   pointerdown 에서 setPointerCapture 를 걸면 이후 이벤트가 SVG 로 몰려서
+   점의 click 이 아예 안 터진다(폰에서 점을 눌러도 무반응). 그래서
+   '거의 안 움직이고 뗐으면 탭'으로 보고 좌표로 직접 히트테스트한다. */
+(function(){
+  const el = $('#mapSvg');
+  let on = false, px = 0, py = 0, moved = 0;
+  const toSvg = e => { const b = el.getBoundingClientRect();
+    return { x: (e.clientX - b.left) / b.width * 400, y: (e.clientY - b.top) / b.height * 400 }; };
+  el.addEventListener('pointerdown', e => {
+    on = true; moved = 0; px = e.clientX; py = e.clientY;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove', e => {
+    if(!on) return;
+    const dx = e.clientX - px, dy = e.clientY - py; px = e.clientX; py = e.clientY;
+    moved += Math.abs(dx) + Math.abs(dy);
+    if(moved < 5) return;                       // 손 떨림은 회전으로 치지 않는다
+    el.classList.add('drag');
+    mapYaw += dx * 0.011;
+    mapPitch = Math.max(-1.2, Math.min(1.2, mapPitch + dy * 0.009));
+    mapDraw();
+  });
+  const end = e => {
+    if(!on) return;
+    on = false; el.classList.remove('drag');
+    if(moved >= 5) return;                      // 돌린 것이면 선택 아님
+    const q = toSvg(e);
+    let best = null, bd = 1e9;
+    for(const d of mapDots){                    // 손가락이 굵으므로 반경을 넉넉히 잡는다
+      const dist = Math.hypot(d.X - q.x, d.Y - q.y);
+      if(dist < Math.max(d.r + 12, 18) && dist < bd){ bd = dist; best = d.id; }
+    }
+    mapPick = best;                             // 빈 곳을 누르면 선택 해제
+    mapDraw(); mapShowInfo();
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', () => { on = false; el.classList.remove('drag'); });
+})();
 
 /* ---------- 마크다운 렌더 (문서 보기 전용) ----------
    원문을 그대로 뿌리니 표가 파이프 범벅으로 보였다. 우리 문서가 실제로 쓰는 문법만
    직접 그린다 — 표·제목·인용·목록·굵게·코드. 외부 라이브러리 없음.
    ⚠️ 무조건 escHtml 을 먼저 통과시킨 뒤 서식을 입힌다(원문의 태그가 실행되면 안 됨).
       <br> 만 예외로 되살린다 — 표 안 줄바꿈에 쓴다. */
+/* ---------- 곡 지도: 3축 산점도 ----------
+   lyrics/_map.json 하나만 읽는다. 곡을 추가하면 그래프와 표가 같이 갱신된다.
+   외부 3D 라이브러리 없이 회전행렬 + 원근 투영만 직접 쓴다. */
+let MAP = null, mapYaw = -0.62, mapPitch = 0.42, mapPick = null, mapDots = [];
+const MAP_YAW0 = -0.62, MAP_PITCH0 = 0.42;
+
+const mapNorm = (v, a, b) => (v - a) / (b - a) * 2 - 1;          // → [-1,1]
+function mapProject(x, y, z){
+  const cy = Math.cos(mapYaw),   sy = Math.sin(mapYaw);
+  const x1 =  x * cy - z * sy,   z1 = x * sy + z * cy;           // Y축 회전
+  const cp = Math.cos(mapPitch), sp = Math.sin(mapPitch);
+  const y1 =  y * cp - z1 * sp,  z2 = y * sp + z1 * cp;          // X축 회전
+  const d = 4.2, f = d / (d - z2);                               // 원근
+  return { X: 200 + x1 * f * 105, Y: 200 - y1 * f * 105, depth: z2, f };
+}
+function mapDraw(){
+  if(!MAP) return;
+  const ax = MAP['_축'], S = MAP.songs, g = [];
+  mapDots = [];                                                  // 탭 히트테스트용 좌표 (아래에서 채운다)
+  const C = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+  const E = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  const P = C.map(c => mapProject(c[0], c[1], c[2]));            // 정육면체가 있어야 공간이 읽힌다
+  E.forEach(([a,b]) => g.push(`<line x1="${P[a].X.toFixed(1)}" y1="${P[a].Y.toFixed(1)}" `
+    + `x2="${P[b].X.toFixed(1)}" y2="${P[b].Y.toFixed(1)}" stroke="#2a3340" stroke-width="1"/>`));
+  const O = mapProject(-1,-1,-1);
+  [[[1,-1,-1],'#e0574a',ax.x.label],[[-1,1,-1],'#4ac07a',ax.y.label],[[-1,-1,1],'#4a8fe0',ax.z.label]]
+    .forEach(([c,col,lab]) => {
+      const q = mapProject(c[0],c[1],c[2]);
+      // 라벨은 축 끝보다 더 바깥에 — 안 그러면 가운데 몰린 곡 점 위에 걸친다
+      const t = mapProject(c[0]===1?1.34:c[0], c[1]===1?1.34:c[1], c[2]===1?1.34:c[2]);
+      g.push(`<line x1="${O.X.toFixed(1)}" y1="${O.Y.toFixed(1)}" x2="${q.X.toFixed(1)}" y2="${q.Y.toFixed(1)}" stroke="${col}" stroke-width="2"/>`);
+      g.push(`<text x="${t.X.toFixed(1)}" y="${t.Y.toFixed(1)}" fill="${col}" font-size="11" text-anchor="middle"`
+        + ` paint-order="stroke" stroke="#0d1117" stroke-width="3">${escHtml(lab)}</text>`);
+    });
+  const pts = S.map(s => ({ s, p: mapProject(mapNorm(s.bpm, ax.x.min, ax.x.max),
+                                             mapNorm(s.bright, ax.y.min, ax.y.max),
+                                             mapNorm(s.gaze, ax.z.min, ax.z.max)) }))
+               .sort((a,b) => a.p.depth - b.p.depth);              // 먼 것부터 그린다
+  pts.forEach(({s,p}) => {
+    const r = +(6.5 * p.f).toFixed(1);
+    const col = s.key === 'major' ? '#f0b429' : '#6ea8fe';
+    mapDots.push({ id: s.id, X: p.X, Y: p.Y, r });
+    const base = mapProject(mapNorm(s.bpm,ax.x.min,ax.x.max), -1, mapNorm(s.gaze,ax.z.min,ax.z.max));
+    g.push(`<line x1="${p.X.toFixed(1)}" y1="${p.Y.toFixed(1)}" x2="${base.X.toFixed(1)}" y2="${base.Y.toFixed(1)}" stroke="#2a3340" stroke-width="1" stroke-dasharray="2 3"/>`);
+    g.push(`<g class="mapdot${mapPick===s.id?' on':''}" data-id="${s.id}">`
+      + `<circle cx="${p.X.toFixed(1)}" cy="${p.Y.toFixed(1)}" r="${r}" fill="${col}" fill-opacity="${(0.5+0.4*p.f/1.5).toFixed(2)}" stroke="#0d1117" stroke-width="1"/></g>`);
+  });
+  /* 라벨은 따로 얹는다. 곡이 몰리면 글자가 겹쳐 아무것도 못 읽으므로
+     앞에 있는 것(선택한 것 먼저)부터 자리를 잡고, 겹치면 그 라벨은 버린다. */
+  const placed = [], lab = [];
+  [...pts].sort((a,b) => (b.s.id===mapPick) - (a.s.id===mapPick) || b.p.depth - a.p.depth)
+    .forEach(({s,p}) => {
+      const r = 6.5 * p.f, w = s.title.length * 12 + 6, h = 14;
+      const box = { x: p.X - w/2, y: p.Y - r - 5 - h, w, h };
+      const hit = placed.some(q => box.x < q.x+q.w && box.x+box.w > q.x && box.y < q.y+q.h && box.y+box.h > q.y);
+      if(hit && s.id !== mapPick) return;
+      placed.push(box);
+      lab.push(`<text x="${p.X.toFixed(1)}" y="${(p.Y - r - 5).toFixed(1)}" fill="${s.id===mapPick?'#fff':'#c9d6e4'}"`
+        + ` font-size="11.5" font-weight="${s.id===mapPick?'700':'400'}" text-anchor="middle"`
+        + ` paint-order="stroke" stroke="#0d1117" stroke-width="3">${escHtml(s.title)}</text>`);
+    });
+  g.push(...lab);
+  $('#mapSvg').innerHTML = g.join('');
+}
+function mapShowInfo(){
+  const s = MAP.songs.find(x => x.id === mapPick), box = $('#mapInfo');
+  if(!s){ box.classList.add('hide'); return; }
+  box.classList.remove('hide');
+  box.innerHTML = `<h4>${escHtml(s.title)} <span class="kv" style="font-size:12px">${escHtml(s.id)} · ${s.bpm} BPM · ${s.key==='major'?'장조':'단조'}</span></h4>`
+    + `<div class="kv">밝기 ${s.bright}/10 · 시선 ${s.gaze}/10 · ${escHtml(s.scene)}</div>`
+    + `<div style="margin-top:6px"><b>${escHtml(s.emotion)}</b></div>`
+    + `<div class="kv" style="margin-top:4px">${escHtml(s.sound)}</div>`
+    + (s.note ? `<div class="kv" style="margin-top:6px">💡 ${escHtml(s.note)}</div>` : '')
+    + `<div class="close">곡을 닫는 말 — <b>${escHtml(s.close)}</b></div>`;
+}
+function mapTable(){
+  const S = [...MAP.songs].sort((a,b) => a.bpm - b.bpm);
+  $('#mapTable').innerHTML = '<div class="listsep" style="margin-top:22px">📋 표로 보기 <span>느린 순서</span></div>'
+    + '<div class="docbody" style="padding:0;border:0;background:transparent"><div class="tablewrap"><table>'
+    + '<thead><tr><th>곡</th><th>BPM</th><th>밝기</th><th>시선</th><th>정서</th></tr></thead><tbody>'
+    + S.map(s => `<tr><td><b>${escHtml(s.title)}</b></td><td>${s.bpm}${s.key==='major'?' · 장':''}</td>`
+        + `<td>${s.bright}</td><td>${s.gaze}</td><td>${escHtml(s.emotion)}</td></tr>`).join('')
+    + '</tbody></table></div></div>';
+}
+async function openMap(){
+  show('viewMap'); $('#hdr').textContent='곡 지도';
+  if(MAP){ mapDraw(); mapTable(); return; }
+  msg($('#mapMsg'),'<span class="spin"></span> 불러오는 중…','info');
+  try{
+    MAP = await ghRaw(`/repos/${OWNER}/${REPO}/contents/lyrics/_map.json?ref=main`);
+    hideMsg($('#mapMsg')); mapDraw(); mapTable();
+  }catch(e){ msg($('#mapMsg'),'지도 데이터를 못 읽었어요: '+escHtml(e.message),'err'); }
+}
+
 function mdInline(s){
   return s
     .replace(/`([^`]+)`/g, '<code>$1</code>')
