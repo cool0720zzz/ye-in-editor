@@ -11,7 +11,17 @@ outdir.mkdir(exist_ok=True)
 
 SONGS = ["A01_네온.md", "A07_첫차.md", "B01_주말에.md"]
 DOCS  = ["기획_첫차_일탈.md", "작사_스터디_2차_5팀.md", "메타태그_다이내믹_가이드.md"]
-DOC_BODY = "# 기획 — 첫차\n\n한글이 깨지지 않아야 한다 · 토요일 아침\n"
+DOC_BODY = (
+    "# 기획 — 첫차\n\n"
+    "한글이 깨지지 않아야 한다 · 토요일 아침\n\n"
+    "| 곡 | BPM | 정서 |\n"
+    "|---|---|---|\n"
+    "| **막차** | 95 | 해학 |\n"
+    "| 첫차 | 118 | 즐거움 |\n\n"
+    "> 인용도 나와야 한다\n\n"
+    "- 목록 항목\n\n"
+    "<script>window.__pwned=1</script>\n"
+)
 SONG_BODY = "**Style of Music:**\n```\ntest style\n```\n\n## 가사\n\n```\n[Verse]\n테스트 가사\n```\n"
 
 b64 = lambda s: base64.b64encode(s.encode()).decode()
@@ -86,6 +96,15 @@ with sync_playwright() as p:
     pg.wait_for_timeout(600)
     body = pg.locator("#docText").inner_text()
     check("토요일 아침" in body, "한글 본문이 안 깨짐")
+    check(pg.locator("#docText table").count() == 1, "표가 진짜 <table> 로 렌더됨")
+    check(pg.locator("#docText th").count() == 3, f"표 헤더 3칸 (실제 {pg.locator('#docText th').count()})")
+    check(pg.locator("#docText td").count() == 6, f"표 본문 6칸 (실제 {pg.locator('#docText td').count()})")
+    check("|" not in body, "파이프 문자가 화면에 안 보임")
+    check("**" not in body, "굵게 표시가 별표로 안 새어나옴")
+    check(pg.locator("#docText h1").count() == 1, "제목이 <h1> 로 렌더됨")
+    check(pg.locator("#docText blockquote").count() == 1, "인용이 <blockquote> 로 렌더됨")
+    check(pg.locator("#docText li").count() == 1, "목록이 <li> 로 렌더됨")
+    check(pg.evaluate("window.__pwned === undefined"), "문서 속 script 태그가 실행되지 않음")
     check(pg.locator("#docMsg.show").count() == 0, "'가사 블록을 찾지 못했어요' 에러 없음")
     check(pg.locator("#viewEdit.hide").count() == 1, "편집 화면이 안 뜸")
     check(pg.locator("#btnCommit:visible").count() == 0, "[확정] 버튼 없음 (저장 불가)")
