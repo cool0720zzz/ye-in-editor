@@ -53,6 +53,11 @@ def handle(route, request):
         return route.fulfill(status=204, headers=CORS)
     u = request.url
     if "_plag_index.json" in u:
+        # 앱이 raw 미디어 타입으로 받으므로(색인이 900KB라 base64는 1MB 한도 초과)
+        # 실제 API 와 똑같이 원문을 그대로 돌려준다
+        if "vnd.github.raw" in (request.headers.get("accept") or ""):
+            return route.fulfill(status=200, headers=CORS,
+                                 content_type="application/json", body=index_json)
         body = json.dumps({"sha": "s", "content": b64(index_json)})
     elif u.rstrip("/").endswith("contents/lyrics"):
         body = json.dumps([{"name": "A99_검사곡.md", "path": "lyrics/A99_검사곡.md", "type": "file"}])
@@ -77,7 +82,7 @@ with sync_playwright() as p:
     pg.wait_for_selector("#songs button", timeout=15000)
     pg.click("#songs button")
     pg.wait_for_selector("#taLyrics", timeout=10000)
-    pg.wait_for_timeout(2500)          # 지문 대조는 비동기(SHA-1)라 여유를 준다
+    pg.wait_for_timeout(6000)          # 지문 대조는 비동기(SHA-1)라 여유를 준다
 
     print("\n[1] 표절 오버레이")
     marks = pg.locator("#taBack mark")

@@ -255,6 +255,19 @@ async function gh(path,opts){
   }
   return r.json();
 }
+/* raw 미디어 타입 — Contents API 의 1MB 인라인 한도를 우회한다(100MB까지, base64 오버헤드 없음).
+   표절 색인이 900KB라 base64(약 1.3배)로는 한도를 넘어 조용히 빈 색인이 된다. */
+async function ghRaw(path){
+  const r=await fetch(API+path,{headers:{
+    'Authorization':'Bearer '+token,
+    'Accept':'application/vnd.github.raw',
+    'X-GitHub-Api-Version':'2022-11-28'}});
+  if(!r.ok){
+    let d=''; try{ d=(await r.json()).message||''; }catch(e){}
+    throw new Error(`${r.status} ${d}`);
+  }
+  return r.json();
+}
 
 /* ---------- 토큰 ---------- */
 $('#btnTok').onclick=()=>{ $('#tokIn').value=''; hideMsg($('#tokMsg')); show('viewToken'); };
@@ -338,9 +351,13 @@ const PRON={'나':'나','내':'나','제':'나','저':'나','날':'나','내게'
 async function loadPlagIndex(){
   if(PLAG) return PLAG;
   try{
-    const d=await gh(`/repos/${OWNER}/${REPO}/contents/lyrics/_plag_index.json?ref=main`);
-    PLAG=JSON.parse(b64d(d.content));
-  }catch(e){ PLAG={n:2,songs:[],hashes:{}}; }
+    // raw 로 받는다 — 색인이 900KB를 넘어 base64(약 1.3배)로는 API 1MB 한도에 걸린다
+    PLAG=await ghRaw(`/repos/${OWNER}/${REPO}/contents/lyrics/_plag_index.json?ref=main`);
+  }catch(e){
+    // 조용히 삼키면 '표절 없음'처럼 보인다 — 실제로 이 사고가 났었다(ghRaw 미정의)
+    console.warn('표절 색인 로드 실패:', e);
+    PLAG={n:2,songs:[],hashes:{},failed:String(e)};
+  }
   return PLAG;
 }
 /* 원문 토큰과 정규화 결과를 함께 남긴다 — 하이라이트 위치를 원문에 되돌리려면 필요 */
@@ -359,30 +376,54 @@ async function sha1hex(s){
   const b=await crypto.subtle.digest('SHA-1', new TextEncoder().encode(s));
   return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,12);
 }
-/* 한 줄에서 겹치는 문자 구간 [start,end,어절수] 목록 */
+/* 한 줄에서 겹치는 문자 구간 목록.
+   ⚠️ 병합은 **같은 곡 안에서만** — 곡을 섞어 합치면 서로 다른 곡의 2어절 히트가
+   하나로 뭉쳐 '4어절'처럼 보인다(2026-07-26 수정, plag_check.py 와 동일 규칙).
+   그리고 레퍼런스가 669곡이라 2어절은 대부분 관용구다 → MIN_WORDS=3 이상만 표시. */
+const MIN_WORDS = 3;
 async function plagSpans(line, idx){
-  const t=tokenize(line), n=idx.n||2, hits=[];
+  const t=tokenize(line), n=idx.n||2, bySong=new Map();
   for(let i=0;i+n<=t.length;i++){
     const key=await sha1hex(t.slice(i,i+n).map(x=>x.norm).join(' '));
     const s=idx.hashes[key];
-    if(s!==undefined) hits.push({i, song:idx.songs[s]});
+    if(s!==undefined){
+      const song=idx.songs[s];
+      if(!bySong.has(song)) bySong.set(song,[]);
+      bySong.get(song).push(i);
+    }
   }
-  if(!hits.length) return [];
-  const spans=[]; let cur={a:hits[0].i, b:hits[0].i+n, songs:new Set([hits[0].song])};
-  for(const h of hits.slice(1)){
-    if(h.i<=cur.b-n+1){ cur.b=Math.max(cur.b,h.i+n); cur.songs.add(h.song); }
-    else { spans.push(cur); cur={a:h.i,b:h.i+n,songs:new Set([h.song])}; }
+  if(!bySong.size) return [];
+  let out=[];
+  for(const [song, idxs] of bySong){
+    let a=idxs[0], b=idxs[0]+n;
+    for(const i of idxs.slice(1)){
+      if(i<=b-n+1){ b=Math.max(b,i+n); }
+      else { out.push({a,b,song}); a=i; b=i+n; }
+    }
+    out.push({a,b,song});
   }
-  spans.push(cur);
-  return spans.map(s=>({start:t[s.a].start, end:t[s.b-1].end,
-                        words:s.b-s.a, songs:[...s.songs]}));
+  out=out.filter(s=>s.b-s.a>=MIN_WORDS);
+  if(!out.length) return [];
+  out.sort((x,y)=>(y.b-y.a)-(x.b-x.a) || x.a-y.a);
+  const kept=[];
+  for(const s of out) if(!kept.some(k=>k.a<=s.a && s.b<=k.b)) kept.push(s);
+  return kept.sort((x,y)=>x.a-y.a).map(s=>({
+    start:t[s.a].start, end:t[s.b-1].end, words:s.b-s.a, songs:[s.song]}));
 }
 const escHtml=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 /* 편집칸 뒤 백드롭을 다시 그린다 (본문은 투명, 겹친 구간만 색) */
 async function refreshPlag(){
   const idx=await loadPlagIndex();
   const text=$('#taLyrics').value, back=$('#taBack'), bar=$('#plagBar');
-  if(!idx.songs.length){ back.innerHTML=''; bar.classList.remove('show'); return; }
+  if(!idx.songs.length){
+    back.innerHTML='';
+    // 색인을 못 읽었으면 '검사 통과'가 아니라 '검사 못 함'이라고 말해야 한다
+    if(idx.failed){
+      bar.innerHTML='<b>⚠️ 표절 검사를 못 했습니다</b> — 색인을 불러오지 못했어요 (검사 안 된 상태)';
+      bar.classList.add('show');
+    }else{ bar.classList.remove('show'); }
+    return;
+  }
   const found=[]; let html='';
   for(const line of text.split('\n')){
     if(!line.trim() || line.trim().startsWith('[')){ html+=escHtml(line)+'\n'; continue; }
